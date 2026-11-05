@@ -28,6 +28,7 @@ uvicorn app.main:app --reload
 ```
 
 SQLite is used at `backend/event_discovery.db` by default. No PostgreSQL server is required for local development.
+Run `alembic upgrade head` whenever migrations change, before starting an existing local database. This prevents stale-schema errors such as missing `categories.icon`.
 
 ### Frontend (second terminal)
 
