@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/admin.tsx","./src/api.ts","./src/components.tsx","./src/main.tsx","./src/pages.tsx","./src/types.ts"],"version":"5.8.3"}
+{"root":["./src/app.tsx","./src/admin.tsx","./src/api.ts","./src/components.tsx","./src/main.tsx","./src/pages.tsx","./src/types.ts","./src/__tests__/admin.test.tsx","./src/__tests__/components.test.tsx","./src/__tests__/pages.test.tsx"],"version":"5.8.3"}

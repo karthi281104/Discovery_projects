@@ -1,4 +1,4 @@
-import type { Category, Event, EventList, Location } from './types'
+import type { AdminMetrics, Category, Event, EventList, Location } from './types'
 
 const request = async <T>(path: string, options?: RequestInit): Promise<T> => {
   const response = await fetch(`/api/v1${path}`, {
@@ -6,16 +6,19 @@ const request = async <T>(path: string, options?: RequestInit): Promise<T> => {
     ...options,
   })
   if (!response.ok) {
-    const body = await response.json().catch(() => null) as { detail?: string | { detail?: string } } | null
+    const body = (await response.json().catch(() => null)) as { detail?: string | { detail?: string } } | null
     const detail = typeof body?.detail === 'string' ? body.detail : 'Request failed'
     throw new Error(`${detail} (${response.status})`)
+  }
+  if (response.status === 204) {
+    return null as T
   }
   return response.json() as Promise<T>
 }
 
 export const getCategories = () => request<Category[]>('/categories')
 export const getLocations = () => request<Location[]>('/locations')
-export const getEvents = (params: Record<string, string | number | undefined> = {}) => {
+export const getEvents = (params: Record<string, string | number | boolean | undefined> = {}) => {
   const query = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== '') query.set(key, String(value))
@@ -26,7 +29,8 @@ export const getEvent = (slug: string) => request<Event>(`/events/${encodeURICom
 export const getFeaturedEvents = () => request<Event[]>('/events/featured')
 export const getUpcomingEvents = () => request<Event[]>('/events/upcoming')
 
-export type AdminEventInput = Partial<Omit<Event, 'id' | 'category' | 'created_at' | 'updated_at'>> & Pick<Event, 'title' | 'description' | 'organizer_name' | 'event_type' | 'mode' | 'start_date' | 'end_date' | 'registration_url'>
+export type AdminEventInput = Partial<Omit<Event, 'id' | 'category' | 'location' | 'created_at' | 'updated_at'>> &
+  Pick<Event, 'title' | 'description' | 'organizer_name' | 'event_type' | 'mode' | 'start_date' | 'registration_url'>
 
 const adminRequest = <T>(path: string, options: RequestInit = {}) => {
   const token = localStorage.getItem('admin_token')
@@ -41,15 +45,57 @@ export const adminLogin = (email: string, password: string) =>
     method: 'POST',
     body: JSON.stringify({ email, password }),
   })
-export const getAdminEvents = (params: Record<string, string | number | undefined> = {}) => {
+
+export const getAdminMetrics = () => adminRequest<AdminMetrics>('/admin/metrics')
+
+export const getAdminEvents = (params: Record<string, string | number | boolean | undefined> = {}) => {
   const query = new URLSearchParams()
   Object.entries(params).forEach(([key, value]) => {
     if (value !== undefined && value !== '') query.set(key, String(value))
   })
   return adminRequest<EventList>(`/admin/events${query.toString() ? `?${query}` : ''}`)
 }
-export const createAdminEvent = (event: AdminEventInput) => adminRequest<Event>('/admin/events', { method: 'POST', body: JSON.stringify(event) })
-export const updateAdminEvent = (id: string, event: Partial<AdminEventInput>) => adminRequest<Event>(`/admin/events/${id}`, { method: 'PUT', body: JSON.stringify(event) })
-export const deleteAdminEvent = (id: string) => adminRequest<void>(`/admin/events/${id}`, { method: 'DELETE' })
-export const updateEventAction = (id: string, action: 'publish' | 'reject' | 'feature') =>
-  adminRequest<Event>(`/admin/events/${id}/${action}`, { method: 'PATCH' })
+
+export const getAdminEvent = (id: string | number) => adminRequest<Event>(`/admin/events/${id}`)
+
+export const createAdminEvent = (event: AdminEventInput) =>
+  adminRequest<Event>('/admin/events', { method: 'POST', body: JSON.stringify(event) })
+
+export const updateAdminEvent = (id: string | number, event: Partial<AdminEventInput>) =>
+  adminRequest<Event>(`/admin/events/${id}`, { method: 'PUT', body: JSON.stringify(event) })
+
+export const deleteAdminEvent = (id: string | number) =>
+  adminRequest<void>(`/admin/events/${id}`, { method: 'DELETE' })
+
+export const updateEventAction = (
+  id: string | number,
+  action: 'publish' | 'reject' | 'feature' | 'unfeature',
+) => {
+  if (action === 'feature') {
+    return adminRequest<Event>(`/admin/events/${id}/feature?state=true`, { method: 'PATCH' })
+  }
+  if (action === 'unfeature') {
+    return adminRequest<Event>(`/admin/events/${id}/unfeature`, { method: 'PATCH' })
+  }
+  return adminRequest<Event>(`/admin/events/${id}/${action}`, { method: 'PATCH' })
+}
+
+// Categories Admin API
+export const getAdminCategories = () => adminRequest<Category[]>('/admin/categories')
+export const createAdminCategory = (data: Partial<Category>) =>
+  adminRequest<Category>('/admin/categories', { method: 'POST', body: JSON.stringify(data) })
+export const updateAdminCategory = (id: string | number, data: Partial<Category>) =>
+  adminRequest<Category>(`/admin/categories/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+export const deactivateAdminCategory = (id: string | number) =>
+  adminRequest<Category>(`/admin/categories/${id}/deactivate`, { method: 'PATCH' })
+export const deleteAdminCategory = (id: string | number) =>
+  adminRequest<void>(`/admin/categories/${id}`, { method: 'DELETE' })
+
+// Locations Admin API
+export const getAdminLocations = () => adminRequest<Location[]>('/admin/locations')
+export const createAdminLocation = (data: Partial<Location>) =>
+  adminRequest<Location>('/admin/locations', { method: 'POST', body: JSON.stringify(data) })
+export const updateAdminLocation = (id: string | number, data: Partial<Location>) =>
+  adminRequest<Location>(`/admin/locations/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+export const deleteAdminLocation = (id: string | number) =>
+  adminRequest<void>(`/admin/locations/${id}`, { method: 'DELETE' })
