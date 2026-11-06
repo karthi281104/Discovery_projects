@@ -11,7 +11,7 @@ def upgrade():
     op.add_column("events", sa.Column("slug", sa.String(280), nullable=True))
     op.add_column("events", sa.Column("is_featured", sa.Boolean(), nullable=False, server_default=sa.false()))
     connection = op.get_bind()
-    connection.execute(sa.text("UPDATE events SET slug = 'event-' || id WHERE slug IS NULL"))
+    connection.execute(sa.text("UPDATE events SET slug = 'event-' || CAST(id AS VARCHAR(50)) WHERE slug IS NULL"))
     op.create_index("ix_events_slug", "events", ["slug"], unique=True)
 
 

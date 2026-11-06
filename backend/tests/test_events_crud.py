@@ -155,3 +155,78 @@ def test_invalid_participation_fee(client, admin_headers):
     response = client.post("/api/v1/admin/events", json=payload, headers=admin_headers)
     assert response.status_code == 422
 
+
+def test_registration_deadline_cannot_be_after_start_date(client, admin_headers):
+    now = datetime.now(timezone.utc)
+    payload = {
+        "title": "Invalid Deadline Event",
+        "description": "Deadline after event starts.",
+        "organizer_name": "Organizer",
+        "registration_url": "https://example.com/reg",
+        "start_date": (now + timedelta(days=5)).isoformat(),
+        "registration_deadline": (now + timedelta(days=7)).isoformat(),  # 2 days after start!
+    }
+
+    response = client.post("/api/v1/admin/events", json=payload, headers=admin_headers)
+    assert response.status_code == 422
+
+
+def test_invalid_status_transition_from_cancelled_to_published(client, admin_headers, sample_published_event):
+    event_id = sample_published_event.id
+
+    # 1. Move to cancelled
+    cancel_res = client.put(
+        f"/api/v1/admin/events/{event_id}",
+        json={"status": "cancelled"},
+        headers=admin_headers,
+    )
+    assert cancel_res.status_code == 200
+    assert cancel_res.json()["status"] == "cancelled"
+
+    # 2. Attempt invalid direct transition from cancelled -> published
+    pub_res = client.patch(f"/api/v1/admin/events/{event_id}/publish", headers=admin_headers)
+    assert pub_res.status_code == 422
+    assert "Invalid status transition" in pub_res.json()["detail"]
+
+
+def test_production_security_validation():
+    from app.core.config import Settings
+    import pytest
+
+    # Test that production with default secret key raises error
+    with pytest.raises(ValueError, match="SECRET_KEY"):
+        Settings(
+            app_env="production",
+            secret_key="change-me-in-production",
+            admin_password="SuperSecurePassword123!",
+            database_url="postgresql+psycopg://user:pass@localhost:5432/db",
+        )
+
+    # Test that production with default admin password raises error
+    with pytest.raises(ValueError, match="ADMIN_PASSWORD"):
+        Settings(
+            app_env="production",
+            secret_key="a" * 32,
+            admin_password="change-me",
+            database_url="postgresql+psycopg://user:pass@localhost:5432/db",
+        )
+
+    # Test that production with sqlite database_url raises error
+    with pytest.raises(ValueError, match="DATABASE_URL"):
+        Settings(
+            app_env="production",
+            secret_key="a" * 32,
+            admin_password="SuperSecurePassword123!",
+            database_url="sqlite:///./event_discovery.db",
+        )
+
+    # Test valid production configuration succeeds
+    valid_prod = Settings(
+        app_env="production",
+        secret_key="a" * 32,
+        admin_password="SuperSecurePassword123!",
+        database_url="postgresql+psycopg://user:pass@localhost:5432/db",
+    )
+    assert valid_prod.app_env == "production"
+
+

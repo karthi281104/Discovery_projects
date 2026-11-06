@@ -57,6 +57,7 @@ class LocationBase(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     is_active: bool = True
+    is_verified_venue: bool = False
 
 
 class LocationCreate(LocationBase):
@@ -72,6 +73,7 @@ class LocationUpdate(BaseModel):
     latitude: float | None = None
     longitude: float | None = None
     is_active: bool | None = None
+    is_verified_venue: bool | None = None
 
 
 class LocationRead(LocationBase):
@@ -162,12 +164,14 @@ class EventBase(BaseModel):
         return data
 
     @model_validator(mode="after")
-    def validate_date_ranges(self) -> "EventBase":
+    def validate_event_data(self) -> "EventBase":
         if self.end_date and self.start_date and self.end_date < self.start_date:
             raise ValueError("end_date must not be earlier than start_date")
         if self.registration_deadline and self.start_date and self.registration_deadline > self.start_date:
-            # Note: Registration deadline can be at start date, but warning or accepted if before end date
-            pass
+            raise ValueError("registration_deadline must not be after start_date")
+        if self.status == "published" or self.is_published:
+            if not self.title or not self.description or not self.organizer_name or not self.registration_url or not self.start_date:
+                raise ValueError("Published events require title, description, organizer_name, start_date, and registration_url")
         return self
 
 
@@ -221,6 +225,14 @@ class EventUpdate(BaseModel):
         if v is not None and v < 0:
             raise ValueError("participation_fee cannot be negative")
         return v
+
+    @model_validator(mode="after")
+    def validate_update_data(self) -> "EventUpdate":
+        if self.end_date and self.start_date and self.end_date < self.start_date:
+            raise ValueError("end_date must not be earlier than start_date")
+        if self.registration_deadline and self.start_date and self.registration_deadline > self.start_date:
+            raise ValueError("registration_deadline must not be after start_date")
+        return self
 
 
 class EventRead(EventBase):

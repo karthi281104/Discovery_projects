@@ -13,14 +13,18 @@ depends_on = None
 
 
 def upgrade() -> None:
-    inspector = sa.inspect(op.get_bind())
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
     columns = {column["name"] for column in inspector.get_columns("categories")}
     if "icon" not in columns:
-        op.add_column("categories", sa.Column("icon", sa.String(40), nullable=True))
+        with op.batch_alter_table("categories") as batch:
+            batch.add_column(sa.Column("icon", sa.String(40), nullable=True))
 
 
 def downgrade() -> None:
-    inspector = sa.inspect(op.get_bind())
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
     columns = {column["name"] for column in inspector.get_columns("categories")}
     if "icon" in columns:
-        op.drop_column("categories", "icon")
+        with op.batch_alter_table("categories") as batch:
+            batch.drop_column("icon")

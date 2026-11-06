@@ -2,8 +2,11 @@ import type { AdminMetrics, Category, Event, EventList, Location } from './types
 
 const request = async <T>(path: string, options?: RequestInit): Promise<T> => {
   const response = await fetch(`/api/v1${path}`, {
-    headers: { 'Content-Type': 'application/json', ...(options?.headers ?? {}) },
     ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(options?.headers ?? {}),
+    },
   })
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { detail?: string | { detail?: string } } | null

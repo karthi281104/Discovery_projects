@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import type { Event } from './types'
 
 const formatDate = (value: string) => {
@@ -31,9 +32,9 @@ export function EventCard({ event }: { event: Event }) {
         <p className="event-line">
           ⌖ {event.mode === 'online' ? 'Online' : [event.venue, event.city].filter(Boolean).join(', ') || event.state}
         </p>
-        <a className="text-link" href={`/events/${event.slug}`}>
+        <Link className="text-link" to={`/events/${event.slug}`}>
           View details →
-        </a>
+        </Link>
       </div>
     </article>
   )

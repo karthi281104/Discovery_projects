@@ -1,4 +1,6 @@
 .env
+.env.*
+!.env.example
 .venv/
 __pycache__/
 *.py[cod]
@@ -10,3 +12,15 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+
+# SQLite & databases
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+event_discovery.db
+
+# TypeScript & build artifacts
+*.tsbuildinfo
+tsconfig.tsbuildinfo

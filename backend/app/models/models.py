@@ -31,6 +31,7 @@ class Location(Base):
     latitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     longitude: Mapped[float | None] = mapped_column(Float, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_verified_venue: Mapped[bool] = mapped_column(Boolean, default=False)
 
     events: Mapped[list["Event"]] = relationship(back_populates="location")
 

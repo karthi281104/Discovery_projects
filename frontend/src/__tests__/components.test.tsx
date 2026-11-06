@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { EventCard, EventGrid } from '../components'
 import type { Event } from '../types'
 
@@ -28,7 +29,11 @@ const mockEvent: Event = {
 
 describe('EventCard component', () => {
   it('renders event title, organizer, and details accurately', () => {
-    render(<EventCard event={mockEvent} />)
+    render(
+      <MemoryRouter>
+        <EventCard event={mockEvent} />
+      </MemoryRouter>
+    )
     expect(screen.getByText('Tamil Nadu Developer Summit')).toBeDefined()
     expect(screen.getByText('Connecting technologists from across Tamil Nadu.')).toBeDefined()
     expect(screen.getByText(/Chennai Trade Centre, Chennai/)).toBeDefined()
@@ -38,20 +43,31 @@ describe('EventCard component', () => {
 
   it('renders online mode properly when mode is online', () => {
     const onlineEvent: Event = { ...mockEvent, mode: 'online', city: null, venue: null }
-    render(<EventCard event={onlineEvent} />)
+    render(
+      <MemoryRouter>
+        <EventCard event={onlineEvent} />
+      </MemoryRouter>
+    )
     expect(screen.getByText(/Online/)).toBeDefined()
   })
 })
 
 describe('EventGrid component', () => {
   it('renders a list of events', () => {
-    render(<EventGrid events={[mockEvent]} />)
+    render(
+      <MemoryRouter>
+        <EventGrid events={[mockEvent]} />
+      </MemoryRouter>
+    )
     expect(screen.getByText('Tamil Nadu Developer Summit')).toBeDefined()
   })
 
   it('renders empty message when no events are provided', () => {
-    render(<EventGrid events={[]} empty="No upcoming opportunities." />)
+    render(
+      <MemoryRouter>
+        <EventGrid events={[]} empty="No upcoming opportunities." />
+      </MemoryRouter>
+    )
     expect(screen.getByText('No upcoming opportunities.')).toBeDefined()
   })
 })
-

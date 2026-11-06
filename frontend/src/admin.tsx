@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import {
   adminLogin,
   createAdminCategory,
@@ -23,6 +24,7 @@ export function AdminLogin() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  const navigate = useNavigate()
 
   const submit = async (event: FormEvent) => {
     event.preventDefault()
@@ -31,7 +33,7 @@ export function AdminLogin() {
     try {
       const result = await adminLogin(email, password)
       localStorage.setItem('admin_token', result.access_token)
-      window.location.href = '/admin/dashboard'
+      navigate('/admin/dashboard')
     } catch (reason) {
       setError((reason as Error).message)
     } finally {
@@ -64,13 +66,15 @@ export function AdminLogin() {
 }
 
 function RedirectToLogin() {
+  const navigate = useNavigate()
   useEffect(() => {
-    window.location.href = '/admin/login'
-  }, [])
+    navigate('/admin/login')
+  }, [navigate])
   return null
 }
 
 export function AdminDashboard() {
+  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState<'events' | 'categories' | 'locations'>('events')
   const [events, setEvents] = useState<EventList | null>(null)
   const [metrics, setMetrics] = useState<AdminMetrics | null>(null)
@@ -217,13 +221,13 @@ export function AdminDashboard() {
           <h1>Event Dashboard</h1>
         </div>
         <div>
-          <a className="primary-button" href="/admin/events/new">
+          <Link className="primary-button" to="/admin/events/new">
             + Create event
-          </a>{' '}
+          </Link>{' '}
           <button
             onClick={() => {
               localStorage.removeItem('admin_token')
-              window.location.href = '/admin/login'
+              navigate('/admin/login')
             }}
           >
             Sign out
@@ -351,9 +355,9 @@ export function AdminDashboard() {
                     {event.is_featured && <span style={{ marginLeft: '0.4rem', fontSize: '0.75rem', background: '#ffd700', color: '#000', padding: '2px 6px', borderRadius: '4px' }}>Featured</span>}
                   </span>
                   <span className="table-actions">
-                    <a className="text-link" href={`/admin/events/${event.id}/edit`} style={{ marginRight: '0.5rem' }}>
+                    <Link className="text-link" to={`/admin/events/${event.id}/edit`} style={{ marginRight: '0.5rem' }}>
                       Edit
-                    </a>
+                    </Link>
                     {event.status !== 'published' && (
                       <button onClick={() => handleAction(event.id, 'publish')}>Publish</button>
                     )}
@@ -526,7 +530,10 @@ const initialForm = {
   is_featured: false,
 }
 
-export function AdminEventForm({ eventId }: { eventId?: string | number }) {
+export function AdminEventForm({ eventId: propId }: { eventId?: string | number } = {}) {
+  const { id: paramId } = useParams<{ id: string }>()
+  const eventId = propId || paramId
+  const navigate = useNavigate()
   const [form, setForm] = useState(initialForm)
   const [categories, setCategories] = useState<Category[]>([])
   const [error, setError] = useState<string | null>(null)
@@ -634,7 +641,7 @@ export function AdminEventForm({ eventId }: { eventId?: string | number }) {
       } else {
         await createAdminEvent(payload)
       }
-      window.location.href = '/admin/dashboard'
+      navigate('/admin/dashboard')
     } catch (reason) {
       setError((reason as Error).message)
     } finally {
@@ -652,9 +659,9 @@ export function AdminEventForm({ eventId }: { eventId?: string | number }) {
 
   return (
     <main className="page-shell content-page admin-page">
-      <a className="text-link" href="/admin/dashboard">
+      <Link className="text-link" to="/admin/dashboard">
         ← Back to dashboard
-      </a>
+      </Link>
       <h1>{eventId ? 'Edit Event' : 'Create Event'}</h1>
 
       <form className="event-form" onSubmit={submit}>

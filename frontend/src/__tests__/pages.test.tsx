@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
-import { EventDetailsPage, ExplorePage } from '../pages'
+import { MemoryRouter } from 'react-router-dom'
+import { EventDetailsPage, ExplorePage, NotFoundPage } from '../pages'
 import * as api from '../api'
 import type { Event, EventList, Category, Location } from '../types'
 
@@ -57,7 +58,11 @@ describe('EventDetailsPage', () => {
   it('renders event details including fees, eligibility, and official links', async () => {
     vi.spyOn(api, 'getEvent').mockResolvedValue(mockEvent)
 
-    render(<EventDetailsPage slug="tamil-nadu-developer-summit" />)
+    render(
+      <MemoryRouter>
+        <EventDetailsPage slug="tamil-nadu-developer-summit" />
+      </MemoryRouter>
+    )
 
     // Loading state initially
     expect(screen.getByText(/Loading event details.../)).toBeDefined()
@@ -77,7 +82,11 @@ describe('EventDetailsPage', () => {
   it('renders error state on API failure', async () => {
     vi.spyOn(api, 'getEvent').mockRejectedValue(new Error('Event not found (404)'))
 
-    render(<EventDetailsPage slug="unknown-event" />)
+    render(
+      <MemoryRouter>
+        <EventDetailsPage slug="unknown-event" />
+      </MemoryRouter>
+    )
 
     await waitFor(() => {
       expect(screen.getByText('Event not found (404)')).toBeDefined()
@@ -94,7 +103,11 @@ describe('ExplorePage filters', () => {
   })
 
   it('renders filters and allows changing category and search', async () => {
-    render(<ExplorePage />)
+    render(
+      <MemoryRouter>
+        <ExplorePage />
+      </MemoryRouter>
+    )
 
     await waitFor(() => {
       expect(screen.getByText('Tamil Nadu Developer Summit')).toBeDefined()
@@ -112,3 +125,17 @@ describe('ExplorePage filters', () => {
   })
 })
 
+describe('NotFoundPage', () => {
+  it('renders 404 message and navigation links', () => {
+    render(
+      <MemoryRouter>
+        <NotFoundPage />
+      </MemoryRouter>
+    )
+
+    expect(screen.getByText('404 — NOT FOUND')).toBeDefined()
+    expect(screen.getByText('Page not found')).toBeDefined()
+    expect(screen.getByText('Browse all events')).toBeDefined()
+    expect(screen.getByText('Back to home')).toBeDefined()
+  })
+})

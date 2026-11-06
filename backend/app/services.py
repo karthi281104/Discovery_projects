@@ -205,12 +205,17 @@ def update_event(db: Session, event_id: int, data: EventUpdate | EventCreate) ->
 
     # Status/publication synchronization
     if "status" in values:
-        if values["status"] == "published":
+        target_status = values["status"]
+        if target_status != event.status:
+            validate_event_status_transition(event.status, target_status)
+        if target_status == "published":
             values["is_published"] = True
         else:
             values["is_published"] = False
     elif "is_published" in values:
         if values["is_published"]:
+            if event.status != "published":
+                validate_event_status_transition(event.status, "published")
             values["status"] = "published"
         elif event.status == "published":
             values["status"] = "draft"
@@ -218,9 +223,52 @@ def update_event(db: Session, event_id: int, data: EventUpdate | EventCreate) ->
     for key, value in values.items():
         setattr(event, key, value)
 
+    if event.status == "published":
+        validate_publish_requirements(event)
+
     db.commit()
     db.refresh(event)
     return event
+
+
+VALID_TRANSITIONS: dict[str, set[str]] = {
+    "draft": {"draft", "pending", "published", "rejected", "cancelled"},
+    "pending": {"pending", "draft", "published", "rejected", "cancelled"},
+    "published": {"published", "draft", "rejected", "cancelled", "expired"},
+    "rejected": {"rejected", "draft", "pending", "published"},
+    "cancelled": {"cancelled", "draft"},
+    "expired": {"expired", "draft"},
+}
+
+
+def validate_event_status_transition(current_status: str, target_status: str) -> None:
+    allowed = VALID_TRANSITIONS.get(current_status, {"draft"})
+    if target_status not in allowed:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Invalid status transition from '{current_status}' to '{target_status}'. "
+            f"Cancelled or expired events must be moved to 'draft' first.",
+        )
+
+
+def validate_publish_requirements(event: Event) -> None:
+    missing = []
+    if not event.title or not event.title.strip():
+        missing.append("title")
+    if not event.description or not event.description.strip():
+        missing.append("description")
+    if not event.organizer_name or not event.organizer_name.strip():
+        missing.append("organizer_name")
+    if not event.start_date:
+        missing.append("start_date")
+    if not event.registration_url or not event.registration_url.strip():
+        missing.append("registration_url")
+
+    if missing:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            f"Cannot publish event missing required fields: {', '.join(missing)}",
+        )
 
 
 def delete_event(db: Session, event_id: int) -> None:
@@ -235,6 +283,10 @@ def set_event_status(db: Session, event_id: int, status_name: str) -> Event:
     event = db.get(Event, event_id)
     if not event:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Event not found")
+
+    validate_event_status_transition(event.status, status_name)
+    if status_name == "published":
+        validate_publish_requirements(event)
 
     event.status = status_name
     event.is_published = status_name == "published"

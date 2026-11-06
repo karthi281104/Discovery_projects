@@ -32,6 +32,7 @@ export type Location = {
   latitude?: number | null
   longitude?: number | null
   is_active?: boolean
+  is_verified_venue?: boolean
 }
 
 export type Event = {

@@ -1,4 +1,3 @@
-import os
 import sys
 from datetime import datetime, timedelta, timezone
 
@@ -48,64 +47,114 @@ CATEGORIES = [
     },
 ]
 
-LOCATIONS = [
-    {"name": "Chennai Trade Centre", "city": "Chennai", "district": "Chennai", "address": "CTC Complex, Nandambakkam, Chennai"},
-    {"name": "IIT Madras Research Park", "city": "Chennai", "district": "Chennai", "address": "Kanagam Road, Taramani, Chennai"},
-    {"name": "CODISSIA Trade Fair Complex", "city": "Coimbatore", "district": "Coimbatore", "address": "G.V. Fair Grounds, Avinashi Road, Coimbatore"},
-    {"name": "Pollachi Central Ground", "city": "Pollachi", "district": "Coimbatore", "address": "Pollachi Main Road, Coimbatore District"},
-    {"name": "Madurai Meenakshi Convention Centre", "city": "Madurai", "district": "Madurai", "address": "Bypass Road, Madurai"},
-    {"name": "Trichy District Central Hall", "city": "Tiruchirappalli", "district": "Tiruchirappalli", "address": "Cantonment, Tiruchirappalli"},
-    {"name": "Salem Town Hall", "city": "Salem", "district": "Salem", "address": "Four Roads, Salem"},
-    {"name": "Tirunelveli Exhibition Ground", "city": "Tirunelveli", "district": "Tirunelveli", "address": "Palayamkottai, Tirunelveli"},
-    {"name": "Erode Municipal Stadium", "city": "Erode", "district": "Erode", "address": "Brough Road, Erode"},
-    {"name": "Vellore Fort Auditorium", "city": "Vellore", "district": "Vellore", "address": "Near Vellore Fort, Vellore"},
-    {"name": "Thanjavur Arts Centre", "city": "Thanjavur", "district": "Thanjavur", "address": "South Rampart, Thanjavur"},
-    {"name": "Kanchipuram Silk Centre Hall", "city": "Kanchipuram", "district": "Kanchipuram", "address": "Gandhi Road, Kanchipuram"},
-    {"name": "Tambaram Community Centre", "city": "Tambaram", "district": "Chengalpattu", "address": "GST Road, Tambaram, Chengalpattu District"},
-    {"name": "Chengalpattu Collectorate Auditorium", "city": "Chengalpattu", "district": "Chengalpattu", "address": "GST Road, Chengalpattu"},
-    {"name": "Tiruppur Knitwear Centre", "city": "Tiruppur", "district": "Tiruppur", "address": "Avinashi Road, Tiruppur"},
-    {"name": "Dindigul Rock Fort Stadium", "city": "Dindigul", "district": "Dindigul", "address": "Near Rock Fort, Dindigul"},
-    {"name": "Cuddalore Port Beach Grounds", "city": "Cuddalore", "district": "Cuddalore", "address": "Silver Beach Road, Cuddalore"},
-    {"name": "Thoothukudi Harbour Grounds", "city": "Thoothukudi", "district": "Thoothukudi", "address": "Beach Road, Thoothukudi"},
-    {"name": "Nagercoil Town Hall", "city": "Nagercoil", "district": "Kanyakumari", "address": "Cape Road, Nagercoil"},
-    {"name": "Hosur Tech Park Hall", "city": "Hosur", "district": "Krishnagiri", "address": "SIPCOT Phase I, Hosur"},
-    {"name": "Krishnagiri District Complex", "city": "Krishnagiri", "district": "Krishnagiri", "address": "Collectorate Road, Krishnagiri"},
-    {"name": "Dharmapuri District Grounds", "city": "Dharmapuri", "district": "Dharmapuri", "address": "Pennagaram Road, Dharmapuri"},
-    {"name": "Namakkal Transport Hub Hall", "city": "Namakkal", "district": "Namakkal", "address": "Salem Road, Namakkal"},
-    {"name": "Karur Textile Fair Hall", "city": "Karur", "district": "Karur", "address": "Kovai Road, Karur"},
-    {"name": "Theni Agricultural Centre", "city": "Theni", "district": "Theni", "address": "Madurai Road, Theni"},
-    {"name": "Sivakasi Jubilee Hall", "city": "Sivakasi", "district": "Virudhunagar", "address": "Sivakasi Main Road, Virudhunagar District"},
-    {"name": "Virudhunagar Municipal Complex", "city": "Virudhunagar", "district": "Virudhunagar", "address": "Madurai Road, Virudhunagar"},
-    {"name": "Ramanathapuram Palace Hall", "city": "Ramanathapuram", "district": "Ramanathapuram", "address": "Palace Grounds, Ramanathapuram"},
-    {"name": "Karaikudi Heritage Complex", "city": "Karaikudi", "district": "Sivaganga", "address": "College Road, Karaikudi"},
-    {"name": "Sivaganga District Hall", "city": "Sivaganga", "district": "Sivaganga", "address": "Madurai Road, Sivaganga"},
-    {"name": "Pudukkottai Palace Grounds", "city": "Pudukkottai", "district": "Pudukkottai", "address": "Palace Road, Pudukkottai"},
-    {"name": "Tiruvarur Chariot Square", "city": "Tiruvarur", "district": "Tiruvarur", "address": "Car Street, Tiruvarur"},
-    {"name": "Nagapattinam Coastal Auditorium", "city": "Nagapattinam", "district": "Nagapattinam", "address": "Public Office Road, Nagapattinam"},
-    {"name": "Mayiladuthurai Cauvery Hall", "city": "Mayiladuthurai", "district": "Mayiladuthurai", "address": "Pattamangala Street, Mayiladuthurai"},
-    {"name": "Ariyalur Cement City Hall", "city": "Ariyalur", "district": "Ariyalur", "address": "Trichy Main Road, Ariyalur"},
-    {"name": "Perambalur Collectorate Grounds", "city": "Perambalur", "district": "Perambalur", "address": "Elambalur Road, Perambalur"},
-    {"name": "Tiruvannamalai Girivalam Plaza", "city": "Tiruvannamalai", "district": "Tiruvannamalai", "address": "Girivalam Path, Tiruvannamalai"},
-    {"name": "Viluppuram Junction Hall", "city": "Viluppuram", "district": "Viluppuram", "address": "Trichy Trunk Road, Viluppuram"},
-    {"name": "Kallakurichi Town Ground", "city": "Kallakurichi", "district": "Kallakurichi", "address": "Salem Main Road, Kallakurichi"},
-    {"name": "Ranipet Industrial Centre", "city": "Ranipet", "district": "Ranipet", "address": "SIPCOT, Ranipet"},
-    {"name": "Tirupathur District Auditorium", "city": "Tirupathur", "district": "Tirupathur", "address": "Railway Station Road, Tirupathur"},
-    {"name": "Tenkasi Waterfalls Pavilion", "city": "Tenkasi", "district": "Tenkasi", "address": "Courtallam Road, Tenkasi"},
-    {"name": "Ooty Heritage Botanical Hall", "city": "Udhagamandalam", "district": "Nilgiris", "address": "Vannarapettai, Ooty, Nilgiris"},
-    {"name": "Tiruvallur Municipal Stadium", "city": "Tiruvallur", "district": "Tiruvallur", "address": "JN Road, Tiruvallur"},
+# Verified venues with physical addresses
+VERIFIED_VENUES = [
+    {
+        "name": "Chennai Trade Centre",
+        "city": "Chennai",
+        "district": "Chennai",
+        "state": "Tamil Nadu",
+        "address": "CTC Complex, Mount Poonamallee Road, Nandambakkam, Chennai, Tamil Nadu 600089",
+        "is_verified_venue": True,
+    },
+    {
+        "name": "IIT Madras Research Park",
+        "city": "Chennai",
+        "district": "Chennai",
+        "state": "Tamil Nadu",
+        "address": "Kanagam Road, Taramani, Chennai, Tamil Nadu 600113",
+        "is_verified_venue": True,
+    },
+    {
+        "name": "CODISSIA Trade Fair Complex",
+        "city": "Coimbatore",
+        "district": "Coimbatore",
+        "state": "Tamil Nadu",
+        "address": "G.V. Fair Grounds, Avinashi Road, Civil Aerodrome Post, Coimbatore, Tamil Nadu 641014",
+        "is_verified_venue": True,
+    },
+    {
+        "name": "Kalaivanar Arangam",
+        "city": "Chennai",
+        "district": "Chennai",
+        "state": "Tamil Nadu",
+        "address": "Wallajah Road, Chepauk, Triplicane, Chennai, Tamil Nadu 600002",
+        "is_verified_venue": True,
+    },
+    {
+        "name": "Madurai Corporation Convention Hall",
+        "city": "Madurai",
+        "district": "Madurai",
+        "state": "Tamil Nadu",
+        "address": "Aringar Anna Maligai, Tallakulam, Madurai, Tamil Nadu 625002",
+        "is_verified_venue": True,
+    },
+]
+
+# District / City entries representing geographic areas (not specific physical venues)
+DISTRICT_LOCATIONS = [
+    {"name": "Chennai Central Hub", "city": "Chennai", "district": "Chennai"},
+    {"name": "Coimbatore City Hub", "city": "Coimbatore", "district": "Coimbatore"},
+    {"name": "Pollachi Hub", "city": "Pollachi", "district": "Coimbatore"},
+    {"name": "Madurai City Hub", "city": "Madurai", "district": "Madurai"},
+    {"name": "Tiruchirappalli Hub", "city": "Tiruchirappalli", "district": "Tiruchirappalli"},
+    {"name": "Salem Hub", "city": "Salem", "district": "Salem"},
+    {"name": "Tirunelveli Hub", "city": "Tirunelveli", "district": "Tirunelveli"},
+    {"name": "Erode Hub", "city": "Erode", "district": "Erode"},
+    {"name": "Vellore Hub", "city": "Vellore", "district": "Vellore"},
+    {"name": "Thanjavur Hub", "city": "Thanjavur", "district": "Thanjavur"},
+    {"name": "Kanchipuram Hub", "city": "Kanchipuram", "district": "Kanchipuram"},
+    {"name": "Tambaram Hub", "city": "Tambaram", "district": "Chengalpattu"},
+    {"name": "Chengalpattu Hub", "city": "Chengalpattu", "district": "Chengalpattu"},
+    {"name": "Tiruppur Hub", "city": "Tiruppur", "district": "Tiruppur"},
+    {"name": "Dindigul Hub", "city": "Dindigul", "district": "Dindigul"},
+    {"name": "Cuddalore Hub", "city": "Cuddalore", "district": "Cuddalore"},
+    {"name": "Thoothukudi Hub", "city": "Thoothukudi", "district": "Thoothukudi"},
+    {"name": "Nagercoil Hub", "city": "Nagercoil", "district": "Kanyakumari"},
+    {"name": "Hosur Hub", "city": "Hosur", "district": "Krishnagiri"},
+    {"name": "Krishnagiri Hub", "city": "Krishnagiri", "district": "Krishnagiri"},
+    {"name": "Dharmapuri Hub", "city": "Dharmapuri", "district": "Dharmapuri"},
+    {"name": "Namakkal Hub", "city": "Namakkal", "district": "Namakkal"},
+    {"name": "Karur Hub", "city": "Karur", "district": "Karur"},
+    {"name": "Theni Hub", "city": "Theni", "district": "Theni"},
+    {"name": "Sivakasi Hub", "city": "Sivakasi", "district": "Virudhunagar"},
+    {"name": "Virudhunagar Hub", "city": "Virudhunagar", "district": "Virudhunagar"},
+    {"name": "Ramanathapuram Hub", "city": "Ramanathapuram", "district": "Ramanathapuram"},
+    {"name": "Karaikudi Hub", "city": "Karaikudi", "district": "Sivaganga"},
+    {"name": "Sivaganga Hub", "city": "Sivaganga", "district": "Sivaganga"},
+    {"name": "Pudukkottai Hub", "city": "Pudukkottai", "district": "Pudukkottai"},
+    {"name": "Tiruvarur Hub", "city": "Tiruvarur", "district": "Tiruvarur"},
+    {"name": "Nagapattinam Hub", "city": "Nagapattinam", "district": "Nagapattinam"},
+    {"name": "Mayiladuthurai Hub", "city": "Mayiladuthurai", "district": "Mayiladuthurai"},
+    {"name": "Ariyalur Hub", "city": "Ariyalur", "district": "Ariyalur"},
+    {"name": "Perambalur Hub", "city": "Perambalur", "district": "Perambalur"},
+    {"name": "Tiruvannamalai Hub", "city": "Tiruvannamalai", "district": "Tiruvannamalai"},
+    {"name": "Viluppuram Hub", "city": "Viluppuram", "district": "Viluppuram"},
+    {"name": "Kallakurichi Hub", "city": "Kallakurichi", "district": "Kallakurichi"},
+    {"name": "Ranipet Hub", "city": "Ranipet", "district": "Ranipet"},
+    {"name": "Tirupathur Hub", "city": "Tirupathur", "district": "Tirupathur"},
+    {"name": "Tenkasi Hub", "city": "Tenkasi", "district": "Tenkasi"},
+    {"name": "Udhagamandalam Hub", "city": "Udhagamandalam", "district": "Nilgiris"},
+    {"name": "Tiruvallur Hub", "city": "Tiruvallur", "district": "Tiruvallur"},
 ]
 
 
 def seed_database(populate_sample_event: bool = True) -> None:
     with Session(engine) as db:
-        # 1. Admin user
-        admin = db.scalar(select(AdminUser).where(AdminUser.email == settings.admin_email))
-        if not admin:
-            admin = AdminUser(email=settings.admin_email, password_hash=hash_password(settings.admin_password), is_active=True)
-            db.add(admin)
-            print(f"Created default admin user: {settings.admin_email}")
+        # 1. Admin user - only in non-production or if safe credentials provided
+        is_prod = settings.app_env.lower() == "production"
+        if not is_prod or settings.admin_password not in {"change-me", "admin"}:
+            admin = db.scalar(select(AdminUser).where(AdminUser.email == settings.admin_email))
+            if not admin:
+                admin = AdminUser(
+                    email=settings.admin_email,
+                    password_hash=hash_password(settings.admin_password),
+                    is_active=True,
+                )
+                db.add(admin)
+                print(f"Created admin user: {settings.admin_email}")
 
-        # 2. Categories
+        # 2. Categories (idempotent)
         cat_map = {}
         for cat_info in CATEGORIES:
             cat = db.scalar(select(Category).where(Category.slug == cat_info["slug"]))
@@ -121,25 +170,55 @@ def seed_database(populate_sample_event: bool = True) -> None:
                 print(f"Created category: {cat.name}")
             cat_map[cat.slug] = cat
 
-        # 3. Locations
+        # 3. Verified venues (idempotent)
         loc_map = {}
-        for loc_info in LOCATIONS:
-            loc = db.scalar(select(Location).where(Location.name == loc_info["name"], Location.city == loc_info["city"]))
+        for venue_info in VERIFIED_VENUES:
+            loc = db.scalar(
+                select(Location).where(
+                    Location.name == venue_info["name"],
+                    Location.city == venue_info["city"],
+                )
+            )
             if not loc:
                 loc = Location(
-                    name=loc_info["name"],
-                    city=loc_info["city"],
-                    district=loc_info.get("district"),
+                    name=venue_info["name"],
+                    city=venue_info["city"],
+                    district=venue_info.get("district"),
                     state="Tamil Nadu",
-                    address=loc_info.get("address"),
+                    address=venue_info.get("address"),
                     is_active=True,
+                    is_verified_venue=True,
                 )
                 db.add(loc)
                 db.flush()
-                print(f"Created location: {loc.name} ({loc.city})")
+                print(f"Created verified venue: {loc.name} ({loc.city})")
+            else:
+                loc.is_verified_venue = True
+                loc.address = venue_info.get("address")
             loc_map[loc.name] = loc
 
-        # 4. Development sample event
+        # 4. Regional district locations without speculative addresses (idempotent)
+        for dist_info in DISTRICT_LOCATIONS:
+            loc = db.scalar(
+                select(Location).where(
+                    Location.name == dist_info["name"],
+                    Location.city == dist_info["city"],
+                )
+            )
+            if not loc:
+                loc = Location(
+                    name=dist_info["name"],
+                    city=dist_info["city"],
+                    district=dist_info.get("district"),
+                    state="Tamil Nadu",
+                    address=None,
+                    is_active=True,
+                    is_verified_venue=False,
+                )
+                db.add(loc)
+                db.flush()
+
+        # 5. Development sample event (strictly non-production)
         is_dev = settings.app_env.lower() in {"development", "dev", "local", "test"}
         if populate_sample_event and is_dev:
             sample_slug = "tamil-nadu-ai-open-source-hackathon-2026"

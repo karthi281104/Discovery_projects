@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from 'react'
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { getCategories, getEvent, getEvents, getFeaturedEvents, getLocations, getUpcomingEvents } from './api'
 import { EventGrid } from './components'
 import type { Category, Event, EventList, Location } from './types'
@@ -53,10 +54,10 @@ export function HomePage() {
             <SectionHeading title="Browse by category" />
             <div className="category-grid">
               {categories.map((category) => (
-                <a className="category-card" href={`/events?category=${category.slug}`} key={category.id}>
+                <Link className="category-card" to={`/events?category=${category.slug}`} key={category.id}>
                   <strong>{category.icon || '✦'}</strong>
                   <span>{category.name}</span>
-                </a>
+                </Link>
               ))}
             </div>
           </section>
@@ -68,9 +69,10 @@ export function HomePage() {
 
 function SearchForm() {
   const [query, setQuery] = useState('')
+  const navigate = useNavigate()
   const submit = (event: FormEvent) => {
     event.preventDefault()
-    window.location.href = `/events${query ? `?search=${encodeURIComponent(query)}` : ''}`
+    navigate(`/events${query ? `?search=${encodeURIComponent(query)}` : ''}`)
   }
   return (
     <form className="search-form" onSubmit={submit}>
@@ -91,9 +93,9 @@ function SectionHeading({ title, link }: { title: string; link?: string }) {
     <div className="section-heading">
       <h2>{title}</h2>
       {link && (
-        <a className="text-link" href={link}>
+        <Link className="text-link" to={link}>
           View all →
-        </a>
+        </Link>
       )}
     </div>
   )
@@ -106,16 +108,16 @@ export function ExplorePage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
-  const initial = new URLSearchParams(window.location.search)
+  const [searchParams] = useSearchParams()
   const [filters, setFilters] = useState({
-    search: initial.get('search') || '',
-    category: initial.get('category') || '',
-    city: initial.get('city') || '',
-    mode: initial.get('mode') || '',
-    time: initial.get('time') || '',
-    featured: initial.get('featured') || '',
-    sort: initial.get('sort') || 'start_date',
-    page: initial.get('page') || '1',
+    search: searchParams.get('search') || '',
+    category: searchParams.get('category') || '',
+    city: searchParams.get('city') || '',
+    mode: searchParams.get('mode') || '',
+    time: searchParams.get('time') || '',
+    featured: searchParams.get('featured') || '',
+    sort: searchParams.get('sort') || 'start_date',
+    page: searchParams.get('page') || '1',
   })
 
   useEffect(() => {
@@ -142,7 +144,6 @@ export function ExplorePage() {
       page: key === 'page' ? value : '1',
     }))
 
-  // Unique cities list for the dropdown
   const uniqueCities = Array.from(new Set(locations.map((loc) => loc.city))).filter(Boolean)
 
   return (
@@ -221,12 +222,19 @@ export function ExplorePage() {
   )
 }
 
-export function EventDetailsPage({ slug }: { slug: string }) {
+export function EventDetailsPage({ slug: propSlug }: { slug?: string } = {}) {
+  const { slug: paramSlug } = useParams<{ slug: string }>()
+  const slug = propSlug || paramSlug || ''
   const [event, setEvent] = useState<Event | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    if (!slug) {
+      setError('Event slug not provided')
+      setLoading(false)
+      return
+    }
     setLoading(true)
     getEvent(slug)
       .then(setEvent)
@@ -237,9 +245,9 @@ export function EventDetailsPage({ slug }: { slug: string }) {
   if (error) {
     return (
       <main className="page-shell content-page">
-        <a className="text-link" href="/events" style={{ display: 'inline-block', marginBottom: '1rem' }}>
+        <Link className="text-link" to="/events" style={{ display: 'inline-block', marginBottom: '1rem' }}>
           ← Back to events
-        </a>
+        </Link>
         <div className="error-state">{error}</div>
       </main>
     )
@@ -258,9 +266,9 @@ export function EventDetailsPage({ slug }: { slug: string }) {
 
   return (
     <main className="page-shell content-page event-detail">
-      <a className="text-link" href="/events">
+      <Link className="text-link" to="/events">
         ← Back to events
-      </a>
+      </Link>
       <div className="detail-header">
         {event.banner_url && <img src={event.banner_url} alt="" />}
         <div>
@@ -329,6 +337,28 @@ export function EventDetailsPage({ slug }: { slug: string }) {
             Register officially ↗
           </a>
         </aside>
+      </div>
+    </main>
+  )
+}
+
+export function NotFoundPage() {
+  return (
+    <main className="page-shell content-page">
+      <div className="empty-state" style={{ padding: '4rem 1rem', textAlign: 'center' }}>
+        <p className="eyebrow">404 — NOT FOUND</p>
+        <h1>Page not found</h1>
+        <p className="hero-copy" style={{ maxWidth: '480px', margin: '1rem auto' }}>
+          The page or opportunity you are looking for does not exist or may have been moved.
+        </p>
+        <div style={{ marginTop: '1.5rem', display: 'flex', gap: '1rem', justifyContent: 'center' }}>
+          <Link className="primary-button" to="/events">
+            Browse all events
+          </Link>
+          <Link className="text-link" to="/">
+            Back to home
+          </Link>
+        </div>
       </div>
     </main>
   )
