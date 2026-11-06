@@ -1,14 +1,14 @@
 """automated discovery pipeline models
 
 Revision ID: 0007_automated_discovery_pipeline
-Revises: 0006_location_verified_venue
+Revises: 0006_alembic_version_length
 Create Date: 2026-11-06
 """
 from alembic import op
 import sqlalchemy as sa
 
 revision = "0007_automated_discovery_pipeline"
-down_revision = "0006_location_verified_venue"
+down_revision = "0006_alembic_version_length"
 branch_labels = None
 depends_on = None
 
@@ -109,4 +109,3 @@ def downgrade():
         op.drop_table("discovery_runs")
     if "discovery_sources" in existing_tables:
         op.drop_table("discovery_sources")
-

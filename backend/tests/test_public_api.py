@@ -164,6 +164,34 @@ def test_time_filter_upcoming_excludes_cancelled_and_expired(client, db):
     assert "cancelled-future-summit" not in upcoming_slugs
 
 
+def test_time_filter_uses_shared_default_duration_for_events_without_end_date(client, db):
+    now = datetime.now(timezone.utc)
+    short_event = Event(
+        title="Short Workshop Without End",
+        slug="short-workshop-without-end",
+        description="A workshop with a documented default duration.",
+        organizer_name="Tech Group",
+        registration_url="https://example.com/short-workshop",
+        start_date=now - timedelta(hours=12),
+        status="published",
+        is_published=True,
+    )
+    db.add(short_event)
+    db.commit()
+
+    active = client.get("/api/v1/events", params={"time": "active"})
+    assert active.status_code == 200
+    assert "short-workshop-without-end" not in {
+        item["slug"] for item in active.json()["items"]
+    }
+
+    past = client.get("/api/v1/events", params={"time": "past"})
+    assert past.status_code == 200
+    assert "short-workshop-without-end" in {
+        item["slug"] for item in past.json()["items"]
+    }
+
+
 def test_featured_events_endpoint(client, db, sample_published_event):
     non_featured = Event(
         title="Non-featured Standard Event",
@@ -234,4 +262,3 @@ def test_categories_and_locations_listing(client, db, sample_category, sample_lo
     assert res_loc.status_code == 200
     assert len(res_loc.json()) >= 1
     assert res_loc.json()[0]["city"] == sample_location.city
-

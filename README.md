@@ -147,7 +147,8 @@ $env:ADMIN_PASSWORD="adminpassword123"
 # Run Alembic migrations up to head (0007)
 alembic upgrade head
 
-# Seed initial categories, locations, admin user, and default sources
+# Seed categories, locations, admin user, and configured discovery sources.
+# No fabricated sample events are created by default.
 python seed.py
 
 # Start FastAPI server
@@ -162,6 +163,9 @@ python -m app.worker
 
 # Or execute a one-off run across due sources and exit:
 python -m app.worker --once
+
+# Optional development-only demo event (never use for real catalogue data):
+python seed.py --sample
 ```
 
 ### 3. Frontend Setup
@@ -216,6 +220,7 @@ alembic heads
 - `0004_complete_milestone2_schema`: Extended fields, indexes, category icon.
 - `0005_repair_category_icon`: Idempotent batch alteration for icon column.
 - `0006_location_verified_venue`: Venue verification flag on physical locations.
+- `0006_alembic_version_length`: Widens Alembic's version marker before the long automated-discovery revision.
 - `0007_automated_discovery_pipeline`: Source registry (`discovery_sources`), run history (`discovery_runs`), source provenance (`event_sources`), and raw audit snapshots (`event_snapshots`).
 
 ---
