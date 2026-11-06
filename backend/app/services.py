@@ -99,44 +99,8 @@ def list_events(
     if mode:
         query = query.where(Event.mode == mode)
 
-    if time:
-        from datetime import timedelta
-        now = datetime.now(timezone.utc)
-        fallback_cutoff = now - timedelta(hours=24)
-
-        # Condition for an event that has effectively not ended
-        is_active_condition = or_(
-            end_col >= now,
-            and_(end_col.is_(None), start_col >= fallback_cutoff),
-        )
-
-        if time == "upcoming":
-            # Upcoming strictly means event start time is in the future
-            query = query.where(
-                start_col > now,
-                Event.status.notin_(["cancelled", "expired"]),
-            )
-        elif time == "ongoing":
-            # Ongoing means start time has passed but effective end time has not
-            query = query.where(
-                start_col <= now,
-                is_active_condition,
-                Event.status.notin_(["cancelled", "expired"]),
-            )
-        elif time == "active":
-            # Active opportunities: both ongoing and upcoming events
-            query = query.where(
-                is_active_condition,
-                Event.status.notin_(["cancelled", "expired"]),
-            )
-        elif time == "past":
-            # Past means effective end time has passed
-            is_past_condition = or_(
-                and_(end_col.isnot(None), end_col < now),
-                and_(end_col.is_(None), start_col < fallback_cutoff),
-                Event.status == "expired",
-            )
-            query = query.where(is_past_condition)
+    # Lifecycle is evaluated in Python using the same policy as the worker.
+    # This avoids SQL approximations that misclassify date-only and missing-end events.
 
     if featured is not None:
         query = query.where(Event.is_featured.is_(featured))
@@ -147,6 +111,23 @@ def list_events(
 
     order_target = start_col if "start_date" in sort else Event.created_at
     order_clause = desc(order_target) if sort.startswith("-") else order_target
+
+    if time:
+        from app.discovery.lifecycle import classify_event_lifecycle
+        all_matching = list(db.scalars(query.order_by(order_clause)).all())
+        if time == "active":
+            allowed = {"upcoming", "ongoing"}
+        elif time == "past":
+            allowed = {"past", "expired"}
+        else:
+            allowed = {time}
+        filtered = [
+            event for event in all_matching
+            if classify_event_lifecycle(event) in allowed
+        ]
+        total = len(filtered)
+        items = filtered[offset:offset + limit]
+        return items, total
 
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     items = list(db.scalars(query.order_by(order_clause).offset(offset).limit(limit)).all())

@@ -1,13 +1,13 @@
 """automated discovery pipeline models
 
-Revision ID: 0007_automated_discovery_pipeline
+Revision ID: 0007_disc_pipeline
 Revises: 0006_location_verified_venue
 Create Date: 2026-11-06
 """
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0007_automated_discovery_pipeline"
+revision = "0007_disc_pipeline"
 down_revision = "0006_location_verified_venue"
 branch_labels = None
 depends_on = None
@@ -15,10 +15,8 @@ depends_on = None
 
 def upgrade():
     conn = op.get_bind()
-    insp = sa.inspect(conn)
-    existing_tables = set(insp.get_table_names())
+    existing_tables = set(sa.inspect(conn).get_table_names())
 
-    # 1. discovery_sources
     if "discovery_sources" not in existing_tables:
         op.create_table(
             "discovery_sources",
@@ -40,7 +38,6 @@ def upgrade():
         op.create_index("ix_discovery_sources_source_type", "discovery_sources", ["source_type"])
         op.create_index("ix_discovery_sources_is_enabled", "discovery_sources", ["is_enabled"])
 
-    # 2. discovery_runs
     if "discovery_runs" not in existing_tables:
         op.create_table(
             "discovery_runs",
@@ -62,7 +59,6 @@ def upgrade():
         op.create_index("ix_discovery_runs_started_at", "discovery_runs", ["started_at"])
         op.create_index("ix_discovery_runs_status", "discovery_runs", ["status"])
 
-    # 3. event_sources
     if "event_sources" not in existing_tables:
         op.create_table(
             "event_sources",
@@ -82,7 +78,6 @@ def upgrade():
         op.create_index("ix_event_sources_canonical_url", "event_sources", ["canonical_url"])
         op.create_index("ix_event_sources_external_event_id", "event_sources", ["external_event_id"])
 
-    # 4. event_snapshots
     if "event_snapshots" not in existing_tables:
         op.create_table(
             "event_snapshots",
@@ -97,16 +92,7 @@ def upgrade():
 
 
 def downgrade():
-    conn = op.get_bind()
-    insp = sa.inspect(conn)
-    existing_tables = set(insp.get_table_names())
-
-    if "event_snapshots" in existing_tables:
-        op.drop_table("event_snapshots")
-    if "event_sources" in existing_tables:
-        op.drop_table("event_sources")
-    if "discovery_runs" in existing_tables:
-        op.drop_table("discovery_runs")
-    if "discovery_sources" in existing_tables:
-        op.drop_table("discovery_sources")
-
+    existing_tables = set(sa.inspect(op.get_bind()).get_table_names())
+    for table_name in ("event_snapshots", "event_sources", "discovery_runs", "discovery_sources"):
+        if table_name in existing_tables:
+            op.drop_table(table_name)
