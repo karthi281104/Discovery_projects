@@ -49,6 +49,11 @@ class ResponseSizeLimitError(Exception):
     pass
 
 
+class RobotsDisallowedError(Exception):
+    """Raised when access to a path is disallowed by the target host's robots.txt."""
+    pass
+
+
 class DomainRateLimiter:
     """Simple in-memory per-domain rate limiter."""
 
@@ -88,7 +93,6 @@ def validate_url_safety(url: str) -> str:
                 raise SSRFProtectionError(f"Target IP {ip} is in blocked network {net}")
         return url
     except ValueError:
-        # Not a direct IP literal, resolve hostname via DNS
         pass
 
     try:
@@ -119,10 +123,11 @@ def validate_url_safety(url: str) -> str:
 class SafeFetcher:
     """
     HTTP client enforcing:
-    - SSRF prevention (DNS check + redirect destination checks)
-    - Response size cap
+    - SSRF prevention (DNS validation on every hop and redirect destination)
+    - Response size limit (5MB)
     - Per-domain rate limiting
     - Connection and read timeouts
+    - Real robots.txt parsing and adherence
     - Custom User-Agent
     """
 
@@ -136,24 +141,40 @@ class SafeFetcher:
         self.timeout = httpx.Timeout(timeout_seconds, connect=10.0)
         self.rate_limiter = DomainRateLimiter(min_interval_seconds=rate_limit_interval)
         self._robots_cache: dict[str, urllib.robotparser.RobotFileParser | None] = {}
+        self._robots_lock = asyncio.Lock()
 
-    def is_allowed_by_robots(self, url: str) -> bool:
-        """Checks if URL path is allowed by the host's robots.txt if available."""
+    async def is_allowed_by_robots(self, url: str) -> bool:
+        """
+        Actually fetches and parses robots.txt for the host if not already cached.
+        Respects disallowed paths and returns False if blocked.
+        """
         parsed = urllib.parse.urlparse(url)
         base = f"{parsed.scheme}://{parsed.netloc}"
-        if base not in self._robots_cache:
-            try:
+
+        async with self._robots_lock:
+            if base not in self._robots_cache:
                 robots_url = f"{base}/robots.txt"
-                validate_url_safety(robots_url)
-                rp = urllib.robotparser.RobotFileParser()
-                rp.set_url(robots_url)
-                # Quick non-blocking attempt or default to allowed
-                self._robots_cache[base] = rp
-            except Exception:
-                self._robots_cache[base] = None
+                try:
+                    validate_url_safety(robots_url)
+                    # Fetch robots.txt directly without recursion
+                    resp = await self.fetch(robots_url, check_robots=False)
+                    if resp.status_code == 200:
+                        rp = urllib.robotparser.RobotFileParser()
+                        rp.parse(resp.text.splitlines())
+                        self._robots_cache[base] = rp
+                    elif resp.status_code == 404:
+                        # 404 means no restrictions
+                        rp = urllib.robotparser.RobotFileParser()
+                        rp.parse([])
+                        self._robots_cache[base] = rp
+                    else:
+                        self._robots_cache[base] = None
+                except Exception as exc:
+                    logger.debug("Could not fetch robots.txt for %s: %s", base, exc)
+                    self._robots_cache[base] = None
 
         rp = self._robots_cache.get(base)
-        if rp:
+        if rp is not None:
             try:
                 return rp.can_fetch(self.user_agent, url)
             except Exception:
@@ -167,13 +188,20 @@ class SafeFetcher:
         headers: dict[str, str] | None = None,
         max_redirects: int = 5,
         max_bytes: int = MAX_RESPONSE_BYTES,
+        check_robots: bool = True,
     ) -> httpx.Response:
         """
-        Fetches a URL with SSRF validation at every hop (including redirects)
-        and stream-based response size enforcement.
+        Fetches a URL with SSRF validation at every hop, redirect re-validation,
+        robots.txt enforcement, and response size limits.
         """
         current_url = url
         redirect_count = 0
+
+        # Check robots.txt unless explicitly suppressed (e.g. when fetching robots.txt itself)
+        if check_robots:
+            allowed = await self.is_allowed_by_robots(url)
+            if not allowed:
+                raise RobotsDisallowedError(f"URL '{url}' is disallowed by {self.user_agent} in robots.txt")
 
         merged_headers = {
             "User-Agent": self.user_agent,
@@ -221,4 +249,3 @@ class SafeFetcher:
 
                 response.raise_for_status()
                 return response
-

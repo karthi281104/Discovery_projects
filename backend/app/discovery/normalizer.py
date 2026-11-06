@@ -1,6 +1,6 @@
 import html
 import re
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 from bs4 import BeautifulSoup
@@ -18,6 +18,15 @@ TAMIL_NADU_DISTRICTS = [
     "Tirupathur", "Tiruppur", "Tiruvallur", "Tiruvannamalai", "Tiruvarur",
     "Vellore", "Viluppuram", "Virudhunagar"
 ]
+
+DISTRICT_ALIASES = {
+    "madras": "Chennai",
+    "trichy": "Tiruchirappalli",
+    "kovai": "Coimbatore",
+    "tuticorin": "Thoothukudi",
+    "pondicherry": "Puducherry",
+    "tanjore": "Thanjavur",
+}
 
 TRACKING_PARAMS = {
     "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
@@ -69,7 +78,6 @@ def normalize_url(url: str | None) -> str:
     if not parsed.scheme or not parsed.netloc:
         return url.strip()
 
-    # Filter query params
     filtered_query = [
         (k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=False)
         if k.lower() not in TRACKING_PARAMS
@@ -80,7 +88,7 @@ def normalize_url(url: str | None) -> str:
     if len(path) > 1 and path.endswith("/"):
         path = path[:-1]
 
-    canonical = urlunparse((
+    return urlunparse((
         parsed.scheme.lower(),
         parsed.netloc.lower(),
         path,
@@ -88,30 +96,82 @@ def normalize_url(url: str | None) -> str:
         query_str,
         ""  # drop fragment
     ))
-    return canonical
+
+
+def _is_date_only_string(date_str: str) -> bool:
+    """Detects whether a date string represents a date-only specification (without hours/minutes)."""
+    s = date_str.strip()
+    # ISO date only: YYYY-MM-DD
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", s):
+        return True
+    # DD-MM-YYYY or DD/MM/YYYY
+    if re.match(r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$", s):
+        return True
+    # Month DD, YYYY or DD Month YYYY without time
+    if not re.search(r"\d{1,2}:\d{2}", s) and not re.search(r"\b(am|pm)\b", s, re.IGNORECASE):
+        # Check if year is present
+        if re.search(r"\b(19|20)\d{2}\b", s):
+            return True
+    return False
+
+
+def parse_date_with_metadata(
+    date_str: str | None,
+    default_tz: ZoneInfo = KOLKATA_TZ,
+) -> tuple[datetime | None, bool]:
+    """
+    Parses a string into a timezone-aware UTC datetime and a boolean flag
+    indicating if the source supplied a date-only value.
+
+    Rules:
+    - ISO 8601 UTC ('Z'): preserved as UTC.
+    - Explicit offset: parsed with original offset, then converted to UTC (not reinterpreted).
+    - Naive date/datetime: localized to default_tz (Asia/Kolkata) then converted to UTC.
+    - Date-only strings: localized at start-of-day (00:00:00) in default_tz, flagged as date_only=True.
+    - Returns (None, False) on invalid or unparseable input.
+    """
+    if not date_str or not str(date_str).strip():
+        return None, False
+
+    raw = str(date_str).strip()
+    is_date_only = _is_date_only_string(raw)
+
+    try:
+        dt = date_parser.parse(raw)
+    except Exception:
+        # Try custom common Indian formats: e.g. "13th & 14th November 2026" or "13 Nov 2026"
+        clean_raw = re.sub(r"(\d+)(st|nd|rd|th)", r"\1", raw, flags=re.IGNORECASE)
+        # If range like "13 & 14 November 2026" or "13 - 14 November 2026", take first day
+        m = re.search(r"(\d+)\s*(?:&|-|to)\s*(\d+)\s+([A-Za-z]+)\s+(\d{4})", clean_raw, re.IGNORECASE)
+        if m:
+            first_day, _, month, year = m.groups()
+            try:
+                dt = date_parser.parse(f"{first_day} {month} {year}")
+                is_date_only = True
+            except Exception:
+                return None, False
+        else:
+            try:
+                dt = date_parser.parse(clean_raw)
+            except Exception:
+                return None, False
+
+    if dt.tzinfo is None:
+        # Naive: apply default_tz (Asia/Kolkata)
+        dt = dt.replace(tzinfo=default_tz)
+
+    # Convert to UTC for persistence
+    utc_dt = dt.astimezone(timezone.utc)
+    return utc_dt, is_date_only
 
 
 def parse_and_localize_date(
     date_str: str | None,
     default_tz: ZoneInfo = KOLKATA_TZ,
 ) -> datetime | None:
-    """
-    Parses a string into a timezone-aware UTC datetime.
-    If the date is naive and associated with India/Tamil Nadu, applies Asia/Kolkata first.
-    """
-    if not date_str or not str(date_str).strip():
-        return None
-
-    cleaned_str = str(date_str).strip()
-    try:
-        dt = date_parser.parse(cleaned_str)
-    except Exception:
-        return None
-
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=default_tz)
-
-    return dt.astimezone(timezone.utc)
+    """Convenience helper returning only the UTC datetime from parse_date_with_metadata."""
+    dt, _ = parse_date_with_metadata(date_str, default_tz)
+    return dt
 
 
 def detect_event_type(title: str, description: str | None, explicit_type: str | None = None) -> str:
@@ -129,36 +189,77 @@ def detect_event_type(title: str, description: str | None, explicit_type: str | 
     return "other"
 
 
+def _match_district_in_text(text: str) -> str | None:
+    """Matches a Tamil Nadu district or alias in text."""
+    lowered = text.lower()
+    for district in TAMIL_NADU_DISTRICTS:
+        pattern = r"\b" + re.escape(district.lower()) + r"\b"
+        if re.search(pattern, lowered):
+            return district
+    for alias, canonical in DISTRICT_ALIASES.items():
+        pattern = r"\b" + re.escape(alias) + r"\b"
+        if re.search(pattern, lowered):
+            return canonical
+    return None
+
+
 def detect_district_and_city(
     venue: str | None,
     city: str | None,
-    text_context: str | None,
+    text_context: str | None = None,
+    source_region: str | None = None,
 ) -> tuple[str | None, str | None]:
-    """Infers district and city from location strings and text context."""
-    combined = f"{venue or ''} {city or ''} {text_context or ''}".lower()
+    """
+    Infers district and city strictly adhering to priority:
+    1. Explicit venue text.
+    2. Explicit city text.
+    3. Structured source location / source_region.
+    4. Reliable source-specific location metadata.
+    5. Unknown (returns None, None).
 
-    detected_district = None
-    for district in TAMIL_NADU_DISTRICTS:
-        pattern = r"\b" + re.escape(district.lower()) + r"\b"
-        if re.search(pattern, combined):
-            detected_district = district
-            break
+    Crucially: NEVER infers city from arbitrary description text when explicit
+    venue or city information exists. Does not pick arbitrary districts if
+    multiple are mentioned in context.
+    """
+    # 1. Explicit Venue
+    if venue and venue.strip():
+        dist = _match_district_in_text(venue)
+        if dist:
+            # Clean city if venue explicitly matches
+            cleaned_city = city.strip() if city and city.strip() else dist
+            return dist, cleaned_city
 
-    # Common alternate names
-    if not detected_district:
-        if "madras" in combined:
-            detected_district = "Chennai"
-        elif "trichy" in combined:
-            detected_district = "Tiruchirappalli"
-        elif "kovai" in combined:
-            detected_district = "Coimbatore"
-        elif "tuticorin" in combined:
-            detected_district = "Thoothukudi"
+    # 2. Explicit City
+    if city and city.strip():
+        cleaned_city = city.strip()
+        if cleaned_city.lower() not in ("tamil nadu", "tamilnadu", "all india", "india", "online", "virtual"):
+            dist = _match_district_in_text(cleaned_city)
+            if dist:
+                return dist, cleaned_city
+            return None, cleaned_city
 
-    # Handle state-level or empty city input
-    cleaned_city = city.strip() if city and city.strip() else None
-    if cleaned_city and cleaned_city.lower() in ("tamil nadu", "tamilnadu", "all india", "india"):
-        cleaned_city = None
+    # 3. Source Region
+    if source_region and source_region.strip():
+        reg = source_region.strip()
+        if reg.lower() not in ("tamil nadu", "tamilnadu", "all india", "india"):
+            dist = _match_district_in_text(reg)
+            if dist:
+                return dist, dist
 
-    detected_city = cleaned_city or detected_district
-    return detected_district, detected_city
+    # 4. Context fallback ONLY if venue, city, and region are all completely absent
+    if not venue and not city and not (source_region and source_region.lower() not in ("tamil nadu", "tamilnadu")):
+        if text_context and text_context.strip():
+            # Only match if there's an unambiguous single district mentioned
+            matches = set()
+            for district in TAMIL_NADU_DISTRICTS:
+                if re.search(r"\b" + re.escape(district.lower()) + r"\b", text_context.lower()):
+                    matches.add(district)
+            for alias, canonical in DISTRICT_ALIASES.items():
+                if re.search(r"\b" + re.escape(alias) + r"\b", text_context.lower()):
+                    matches.add(canonical)
+            if len(matches) == 1:
+                single_dist = matches.pop()
+                return single_dist, single_dist
+
+    # 5. Unknown
+    return None, None

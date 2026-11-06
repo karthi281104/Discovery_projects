@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import and_, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import AdminUser, Category, Event, Location
@@ -85,7 +85,7 @@ def list_events(
         )
 
     start_col = func.coalesce(Event.start_date, Event.starts_at)
-    end_col = func.coalesce(Event.end_date, Event.ends_at, Event.start_date, Event.starts_at)
+    end_col = func.coalesce(Event.end_date, Event.ends_at)
 
     if from_date:
         query = query.where(start_col >= from_date)
@@ -100,20 +100,43 @@ def list_events(
         query = query.where(Event.mode == mode)
 
     if time:
+        from datetime import timedelta
         now = datetime.now(timezone.utc)
+        fallback_cutoff = now - timedelta(hours=24)
+
+        # Condition for an event that has effectively not ended
+        is_active_condition = or_(
+            end_col >= now,
+            and_(end_col.is_(None), start_col >= fallback_cutoff),
+        )
+
         if time == "upcoming":
+            # Upcoming strictly means event start time is in the future
             query = query.where(
-                start_col >= now,
+                start_col > now,
                 Event.status.notin_(["cancelled", "expired"]),
             )
         elif time == "ongoing":
+            # Ongoing means start time has passed but effective end time has not
             query = query.where(
                 start_col <= now,
-                end_col >= now,
+                is_active_condition,
+                Event.status.notin_(["cancelled", "expired"]),
+            )
+        elif time == "active":
+            # Active opportunities: both ongoing and upcoming events
+            query = query.where(
+                is_active_condition,
                 Event.status.notin_(["cancelled", "expired"]),
             )
         elif time == "past":
-            query = query.where(end_col < now)
+            # Past means effective end time has passed
+            is_past_condition = or_(
+                and_(end_col.isnot(None), end_col < now),
+                and_(end_col.is_(None), start_col < fallback_cutoff),
+                Event.status == "expired",
+            )
+            query = query.where(is_past_condition)
 
     if featured is not None:
         query = query.where(Event.is_featured.is_(featured))

@@ -12,7 +12,13 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.db.session import engine
 from app.discovery.fetcher import SafeFetcher
-from app.discovery.service import expire_past_events, run_discovery_for_source
+from app.discovery.service import (
+    SourceLockedError,
+    expire_past_events,
+    is_source_locked,
+    recover_abandoned_runs,
+    run_discovery_for_source,
+)
 from app.models import DiscoverySource
 
 logging.basicConfig(
@@ -36,25 +42,59 @@ class DiscoveryWorker:
     async def run_source_with_lock(self, source_id: int) -> None:
         async with self._lock:
             if source_id in self._active_sources:
-                logger.debug("Source %d is already actively running, skipping", source_id)
+                logger.debug("Source %d is locally queued/running, skipping", source_id)
                 return
             self._active_sources.add(source_id)
 
         try:
             async with self.semaphore:
                 with Session(engine) as db:
+                    # Persisted database-level lock check
+                    if is_source_locked(db, source_id):
+                        logger.info("Source %d is locked by another runner or replica, skipping", source_id)
+                        return
                     await run_discovery_for_source(db, source_id, self.fetcher)
+        except SourceLockedError:
+            logger.info("Source %d was locked concurrently, skipping", source_id)
         except Exception as exc:
             logger.exception("Unexpected error executing source %d: %s", source_id, exc)
         finally:
             async with self._lock:
                 self._active_sources.discard(source_id)
 
-    async def execute_due_sources(self) -> int:
+    async def execute_cycle(self) -> int:
+        """
+        Executes one worker cycle:
+        1. Recovers any abandoned runs from previous process crashes.
+        2. ALWAYS runs event expiry sweep (even if discovery is disabled or zero sources exist).
+        3. Checks due discovery sources and triggers crawls.
+        """
         now = datetime.now(timezone.utc)
         due_source_ids: list[int] = []
 
         with Session(engine) as db:
+            # 1. Recover abandoned runs (> 15 minutes old in status 'running')
+            try:
+                recovered = recover_abandoned_runs(db)
+                if recovered > 0:
+                    logger.info("Worker iteration recovered %d abandoned run(s)", recovered)
+            except Exception as exc:
+                logger.warning("Error recovering abandoned runs: %s", exc)
+
+            # 2. Expiry task: MUST ALWAYS run regardless of sources
+            try:
+                expired = expire_past_events(db)
+                if expired > 0:
+                    logger.info("Worker expiry sweep marked %d event(s) as expired", expired)
+            except Exception as exc:
+                logger.error("Error executing scheduled event expiry: %s", exc)
+
+            # If discovery is globally disabled, do not crawl sources
+            if not settings.discovery_enabled:
+                logger.debug("Discovery disabled in settings; crawled 0 sources")
+                return 0
+
+            # 3. Find due sources
             sources = db.scalars(
                 select(DiscoverySource)
                 .where(DiscoverySource.is_enabled.is_(True))
@@ -62,6 +102,10 @@ class DiscoveryWorker:
             ).all()
 
             for source in sources:
+                # Check persisted lock
+                if is_source_locked(db, source.id):
+                    continue
+
                 if source.last_crawl_time is None:
                     due_source_ids.append(source.id)
                 else:
@@ -72,12 +116,6 @@ class DiscoveryWorker:
                     interval_seconds = (source.crawl_interval or settings.discovery_interval_minutes) * 60
                     if elapsed_seconds >= interval_seconds:
                         due_source_ids.append(source.id)
-
-            # Also check and expire past events
-            try:
-                expire_past_events(db)
-            except Exception as exc:
-                logger.warning("Error running event expiry check: %s", exc)
 
         if not due_source_ids:
             logger.debug("No discovery sources currently due for crawl")
@@ -97,22 +135,19 @@ class DiscoveryWorker:
             settings.discovery_max_concurrent_sources,
         )
 
-        if not settings.discovery_enabled:
-            logger.warning("Discovery is disabled via DISCOVERY_ENABLED setting. Exiting.")
-            return
-
         while self.running:
             try:
-                await self.execute_due_sources()
+                await self.execute_cycle()
             except Exception as exc:
                 logger.exception("Error in discovery worker iteration: %s", exc)
 
             if once:
-                logger.info("One-off run requested. Worker exiting.")
+                logger.info("One-off run completed. Worker exiting.")
                 break
 
-            # Poll every 60 seconds
-            for _ in range(60):
+            # Sleep in 1-second increments to honor graceful shutdown immediately
+            interval_secs = max(10, settings.discovery_interval_minutes * 60)
+            for _ in range(interval_secs):
                 if not self.running:
                     break
                 await asyncio.sleep(1)

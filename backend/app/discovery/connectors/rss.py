@@ -1,4 +1,5 @@
 import logging
+import re
 from typing import Any
 import feedparser
 
@@ -7,9 +8,33 @@ from app.models import DiscoverySource
 
 logger = logging.getLogger(__name__)
 
+EVENT_DATE_PATTERNS = [
+    # "13th & 14th November 2026" or "13th - 14th November 2026" or "13 to 14 November 2026"
+    re.compile(r"(\d{1,2}(?:st|nd|rd|th)?\s*(?:&|-|to)\s*\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+\s+\d{4})", re.IGNORECASE),
+    # "13th November 2026" or "13 November 2026"
+    re.compile(r"(\b\d{1,2}(?:st|nd|rd|th)?\s+[A-Za-z]+\s+\d{4}\b)", re.IGNORECASE),
+    # "November 13, 2026"
+    re.compile(r"(\b[A-Za-z]+\s+\d{1,2}(?:st|nd|rd|th)?,?\s+\d{4}\b)", re.IGNORECASE),
+    # "2026-11-13"
+    re.compile(r"(\b\d{4}-\d{2}-\d{2}\b)"),
+    # "13/11/2026" or "13-11-2026"
+    re.compile(r"(\b\d{1,2}[/-]\d{1,2}[/-]\d{4}\b)"),
+]
+
+
+def extract_date_from_text(text: str) -> str | None:
+    """Extracts an event date string mentioned in title or summary text."""
+    if not text:
+        return None
+    for pattern in EVENT_DATE_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            return match.group(1).strip()
+    return None
+
 
 class RSSConnector(BaseConnector):
-    """Extracts event candidates from RSS and Atom XML feeds."""
+    """Extracts event candidates from RSS and Atom XML feeds without inventing dates."""
 
     async def extract_candidates(
         self,
@@ -35,14 +60,28 @@ class RSSConnector(BaseConnector):
             if isinstance(summary, dict):
                 summary = summary.get("value", "")
 
-            # Look for explicit event dates or fallback to published/updated
+            # Look for explicit event dates in tags/extensions
             start_date_str = (
                 entry.get("ev_startdate")
                 or entry.get("start_date")
-                or entry.get("published")
-                or entry.get("updated")
+                or entry.get("event_start")
+                or entry.get("startDate")
             )
-            end_date_str = entry.get("ev_enddate") or entry.get("end_date")
+            end_date_str = (
+                entry.get("ev_enddate")
+                or entry.get("end_date")
+                or entry.get("event_end")
+                or entry.get("endDate")
+            )
+
+            # If no explicit event date tag, attempt extraction from title or summary text
+            if not start_date_str:
+                extracted = extract_date_from_text(title) or extract_date_from_text(summary)
+                if extracted:
+                    start_date_str = extracted
+
+            # Note: Article publication/update timestamp is intentionally NOT used as event date
+            # to prevent future events from being prematurely expired.
 
             organizer = entry.get("author") or entry.get("author_detail", {}).get("name")
             tags = [t.get("term", "") for t in entry.get("tags", []) if t.get("term")]
@@ -67,4 +106,3 @@ class RSSConnector(BaseConnector):
             )
 
         return candidates
-

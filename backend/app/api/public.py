@@ -38,7 +38,7 @@ def events(
     to_date: datetime | None = None,
     event_type: str | None = None,
     mode: str | None = None,
-    time: Literal["upcoming", "ongoing", "past"] | None = None,
+    time: Literal["upcoming", "ongoing", "past", "active"] | None = None,
     featured: bool | None = None,
     sort: str = Query("start_date", pattern="^-?(start_date|created_at)$"),
     page: int = Query(1, ge=1),
@@ -76,13 +76,15 @@ def events(
 
 @router.get("/events/featured", response_model=list[EventRead])
 def featured_events(db: Session = Depends(get_db)):
-    items, _ = list_events(db, featured=True, published_only=True, limit=20)
+    """Returns featured active events (upcoming or ongoing, not past or expired)."""
+    items, _ = list_events(db, featured=True, time="active", published_only=True, limit=20)
     return items
 
 
 @router.get("/events/upcoming", response_model=list[EventRead])
 def upcoming_events(db: Session = Depends(get_db)):
-    items, _ = list_events(db, time="upcoming", published_only=True, limit=20)
+    """Returns active events without omitting ongoing opportunities."""
+    items, _ = list_events(db, time="active", published_only=True, limit=20)
     return items
 
 
