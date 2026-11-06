@@ -1,6 +1,6 @@
 # Tamil Event Discovery
 
-Tamil Event Discovery is a public event discovery platform focused initially on Tamil Nadu. Milestone 2 adds event management, public search and filtering, and protected administration.
+Tamil Event Discovery is a public event discovery platform focused initially on Tamil Nadu. Milestone 2 provides event management, public search and filtering, and protected administration.
 
 ## Stack and architecture
 
@@ -9,7 +9,7 @@ Tamil Event Discovery is a public event discovery platform focused initially on 
 - **Database:** PostgreSQL with Docker; SQLite by default for no-Docker development
 - **Migrations:** Alembic
 
-Backend layers are separated into `app/models.py`, `app/schemas.py`, `app/services.py`, `app/api/`, and `app/db/`. The frontend keeps API communication in `src/api.ts`, shared types in `src/types.ts`, reusable cards in `src/components.tsx`, public pages in `src/pages.tsx`, and administration in `src/admin.tsx`.
+Backend layers are separated into `app/models`, `app/schemas.py`, `app/services.py`, `app/api`, and `app/db`. The frontend keeps API communication in `src/api.ts`, shared types in `src/types.ts`, reusable cards in `src/components.tsx`, public pages in `src/pages.tsx`, and administration in `src/admin.tsx`.
 
 ## Run without Docker
 
@@ -24,11 +24,11 @@ $env:SECRET_KEY="replace-this-with-a-long-random-secret"
 $env:ADMIN_EMAIL="admin@example.com"
 $env:ADMIN_PASSWORD="change-this-local-password"
 alembic upgrade head
+python seed.py
 uvicorn app.main:app --reload
 ```
 
-SQLite is used at `backend/event_discovery.db` by default. No PostgreSQL server is required for local development.
-Run `alembic upgrade head` whenever migrations change, before starting an existing local database. This prevents stale-schema errors such as missing `categories.icon`.
+SQLite is used at `backend/event_discovery.db` by default. No PostgreSQL server is required for local development. Run `alembic upgrade head` whenever migrations change, before starting an existing local database.
 
 ### Frontend (second terminal)
 
@@ -57,7 +57,7 @@ The website runs at <http://localhost:5173>, the API at <http://localhost:8000>,
 ```powershell
 cd backend
 alembic upgrade head
-python -m app.seed
+python seed.py
 ```
 
 The migration creates normalized `events`, `categories`, `locations`, and `admin_users` tables with indexes and constraints. The seed command adds the initial Tamil Nadu categories and locations and creates the configured admin account if it does not exist. Never use the example admin password outside local development.
@@ -66,7 +66,7 @@ The migration creates normalized `events`, `categories`, `locations`, and `admin
 
 ### Public
 
-- `GET /api/v1/events` — published events with pagination, search and filters
+- `GET /api/v1/events` — published events with pagination, search, filters, and sorting
 - `GET /api/v1/events/{slug}` — one published event
 - `GET /api/v1/events/featured` — featured published events
 - `GET /api/v1/events/upcoming` — upcoming published events
@@ -76,7 +76,7 @@ The migration creates normalized `events`, `categories`, `locations`, and `admin
 
 ### Admin
 
-Authenticate with `POST /api/v1/admin/login`, then send `Authorization: Bearer <access_token>`:
+Authenticate with `POST /api/v1/admin/login`, then send an `Authorization: Bearer <access_token>` header.
 
 - `GET|POST /api/v1/admin/events`
 - `GET|PUT|DELETE /api/v1/admin/events/{id}`
@@ -99,10 +99,20 @@ cd ..\frontend
 npm run build
 ```
 
+The normal test suite uses isolated in-memory SQLite for speed. To validate the full migration chain against PostgreSQL, create a disposable PostgreSQL database and set its URL:
+
+```powershell
+cd backend
+$env:TEST_POSTGRES_URL="postgresql+psycopg://event_discovery:test_password@localhost:5432/event_discovery_test"
+pytest -q tests/test_postgres_migrations.py
+```
+
+The migration test is skipped when `TEST_POSTGRES_URL` is not set.
+
 ## Environment
 
 See [.env.example](./.env.example). Do not commit `.env` or production credentials. The frontend admin area is available at `/admin/login`; public browsing is available at `/` and `/events`.
 
 ## Known limitations and Milestone 3
 
-The current frontend provides the public discovery flow and core admin event creation/actions. Rich admin editing, category management screens, production deployment hardening, and automated discovery/crawling remain follow-up work. Milestone 3 should add source ingestion, structured extraction, duplicate detection, verification evidence, and an admin review queue without automatically publishing unverified events.
+The frontend provides public discovery, event detail pages, admin event creation/editing, event actions, and category/location management. Production deployment hardening and automated discovery/crawling remain follow-up work. Milestone 3 should add source ingestion, structured extraction, duplicate detection, verification evidence, and an admin review queue without automatically publishing unverified events.

@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -11,10 +13,17 @@ from app.core.security import hash_password
 from sqlalchemy import inspect, text
 from app.core.config import settings
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    ensure_default_admin()
+    yield
+
+
 app = FastAPI(
     title=settings.app_name,
     description="Public event discovery API, initially focused on Tamil Nadu, India.",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -29,7 +38,6 @@ app.include_router(health_router, prefix=settings.api_v1_prefix)
 app.include_router(public_router, prefix=settings.api_v1_prefix)
 app.include_router(admin_router, prefix=settings.api_v1_prefix)
 
-@app.on_event("startup")
 def ensure_default_admin() -> None:
     from sqlalchemy.orm import Session
 

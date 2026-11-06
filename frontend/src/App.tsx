@@ -41,7 +41,7 @@ export default function App() {
       <footer className="page-shell">
         <span>Built for discovering verified opportunities across Tamil Nadu.</span>
         <span>
-          <a href="/api/docs" target="_blank" rel="noreferrer">
+          <a href="/docs" target="_blank" rel="noreferrer">
             API docs ↗
           </a>
         </span>

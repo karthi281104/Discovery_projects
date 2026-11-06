@@ -80,7 +80,7 @@ def upgrade():
             organizer_name = COALESCE(organizer_name, organizer),
             registration_url = COALESCE(registration_url, ticket_url),
             banner_url = COALESCE(banner_url, image_url),
-            status = COALESCE(status, CASE WHEN is_published = 1 THEN 'published' ELSE 'draft' END),
+            status = COALESCE(status, CASE WHEN is_published IS TRUE THEN 'published' ELSE 'draft' END),
             currency = COALESCE(currency, 'INR')
     """))
 
