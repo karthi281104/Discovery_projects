@@ -11,6 +11,7 @@ import type {
   EventList,
   EventSource,
   Location,
+  SearchCampaign,
 } from './types'
 
 const request = async <T>(path: string, options?: RequestInit): Promise<T> => {
@@ -153,6 +154,12 @@ export const triggerAdminDiscoverySource = (sourceId: string | number) =>
 
 export const getAdminDiscoveryMetrics = () =>
   adminRequest<DiscoveryMetrics>('/admin/discovery/metrics')
+
+export const triggerAdminSearchCampaign = () =>
+  adminRequest<SearchCampaign>('/admin/discovery/search', { method: 'POST' })
+
+export const getAdminSearchCampaigns = () =>
+  adminRequest<SearchCampaign[]>('/admin/discovery/search/campaigns')
 
 export const getAdminDiscoveryCandidates = (limit = 50) =>
   adminRequest<DiscoveryCandidate[]>(`/admin/discovery/candidates?limit=${limit}`)

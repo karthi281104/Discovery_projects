@@ -19,7 +19,8 @@ from app.discovery.service import (
     recover_abandoned_runs,
     run_discovery_for_source,
 )
-from app.models import DiscoverySource
+from app.discovery.search import run_search_campaign
+from app.models import DiscoverySource, SearchCampaign
 
 logging.basicConfig(
     level=logging.INFO,
@@ -93,6 +94,22 @@ class DiscoveryWorker:
             if not settings.discovery_enabled:
                 logger.debug("Discovery disabled in settings; crawled 0 sources")
                 return 0
+
+            if settings.discovery_search_enabled and settings.discovery_search_url:
+                latest_campaign = db.scalar(
+                    select(SearchCampaign)
+                    .order_by(SearchCampaign.started_at.desc())
+                    .limit(1)
+                )
+                campaign_due = (
+                    latest_campaign is None
+                    or latest_campaign.completed_at is None
+                    or (now - latest_campaign.completed_at).total_seconds()
+                    >= settings.discovery_search_interval_minutes * 60
+                )
+                if campaign_due:
+                    logger.info("Starting autonomous search campaign for %s", "Tamil Nadu")
+                    await run_search_campaign(db)
 
             # 3. Find due sources
             sources = db.scalars(

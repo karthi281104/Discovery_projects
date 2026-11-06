@@ -1,4 +1,5 @@
 from app.discovery.connectors.api import APIConnector
+from app.discovery.connectors.auto import AutoConnector
 from app.discovery.connectors.base import BaseConnector, RawCandidate
 from app.discovery.connectors.html import HTMLConnector
 from app.discovery.connectors.jsonld import JsonLdConnector
@@ -9,6 +10,7 @@ _REGISTRY: dict[str, BaseConnector] = {
     "jsonld": JsonLdConnector(),
     "html": HTMLConnector(),
     "api": APIConnector(),
+    "auto": AutoConnector(),
 }
 
 
@@ -20,4 +22,3 @@ def get_connector(source_type: str) -> BaseConnector:
             f"Supported types are: {', '.join(_REGISTRY.keys())}"
         )
     return connector
-

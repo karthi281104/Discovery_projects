@@ -9,6 +9,7 @@ import {
   toggleAdminDiscoverySource,
   triggerAdminDiscoveryAll,
   triggerAdminDiscoverySource,
+  triggerAdminSearchCampaign,
   updateAdminDiscoverySource,
 } from './api'
 import type {
@@ -123,6 +124,24 @@ export function DiscoveryMonitor() {
     try {
       const resultRuns = await triggerAdminDiscoveryAll()
       setSuccessMsg(`Discovery triggered for all enabled sources (${resultRuns.length} runs executed).`)
+      loadAll()
+    } catch (err) {
+      setGlobalError((err as Error).message)
+    } finally {
+      setActionLoading(false)
+    }
+
+  }
+
+  const handleSearchCampaign = async () => {
+    setActionLoading(true)
+    setGlobalError(null)
+    setSuccessMsg(null)
+    try {
+      const campaign = await triggerAdminSearchCampaign()
+      setSuccessMsg(
+        `Search campaign completed: ${campaign.results_collected} results and ${campaign.sources_discovered} new sources.`
+      )
       loadAll()
     } catch (err) {
       setGlobalError((err as Error).message)
@@ -298,6 +317,9 @@ export function DiscoveryMonitor() {
         <div style={{ display: 'flex', gap: '0.75rem' }}>
           <button onClick={handleTriggerAll} disabled={actionLoading || sourcesLoading} className="action-button">
             {actionLoading ? 'Running...' : 'Trigger All Sources'}
+          </button>
+          <button onClick={handleSearchCampaign} disabled={actionLoading} className="action-button">
+            Search Internet
           </button>
           <button onClick={openAddModal} className="primary-button">
             + Add New Source

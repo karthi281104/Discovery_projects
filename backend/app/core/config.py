@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     discovery_max_pages_per_source: int = 10
     discovery_max_concurrent_sources: int = 3
     discovery_user_agent: str = "TamilEventDiscoveryBot/1.0 (+https://github.com/karthi281104/Discovery_projects)"
+    discovery_search_enabled: bool = False
+    discovery_search_url: str = ""
+    discovery_search_interval_minutes: int = 360
+    discovery_search_max_queries: int = 12
+    discovery_search_results_per_query: int = 10
+    discovery_search_languages: str = "en,ta"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
