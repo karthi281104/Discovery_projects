@@ -20,13 +20,25 @@ import type {
 } from './types'
 
 export function DiscoveryMonitor() {
+  // Section-level states: [data, loading, error]
   const [metrics, setMetrics] = useState<DiscoveryMetrics | null>(null)
-  const [sources, setSources] = useState<DiscoverySource[]>([])
-  const [runs, setRuns] = useState<DiscoveryRun[]>([])
-  const [candidates, setCandidates] = useState<DiscoveryCandidate[]>([])
-  const [loading, setLoading] = useState(false)
+  const [metricsLoading, setMetricsLoading] = useState(false)
+  const [metricsError, setMetricsError] = useState<string | null>(null)
+
+  const [sources, setSources] = useState<DiscoverySource[] | null>(null)
+  const [sourcesLoading, setSourcesLoading] = useState(false)
+  const [sourcesError, setSourcesError] = useState<string | null>(null)
+
+  const [runs, setRuns] = useState<DiscoveryRun[] | null>(null)
+  const [runsLoading, setRunsLoading] = useState(false)
+  const [runsError, setRunsError] = useState<string | null>(null)
+
+  const [candidates, setCandidates] = useState<DiscoveryCandidate[] | null>(null)
+  const [candidatesLoading, setCandidatesLoading] = useState(false)
+  const [candidatesError, setCandidatesError] = useState<string | null>(null)
+
   const [actionLoading, setActionLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [globalError, setGlobalError] = useState<string | null>(null)
   const [successMsg, setSuccessMsg] = useState<string | null>(null)
 
   // Add/Edit Source Form
@@ -41,41 +53,79 @@ export function DiscoveryMonitor() {
   // Run detail modal
   const [selectedRun, setSelectedRun] = useState<DiscoveryRun | null>(null)
 
-  const loadData = async () => {
-    setLoading(true)
-    setError(null)
+  const loadMetrics = async () => {
+    setMetricsLoading(true)
+    setMetricsError(null)
     try {
-      const [m, s, r, c] = await Promise.all([
-        getAdminDiscoveryMetrics().catch(() => null),
-        getAdminDiscoverySources().catch(() => ({ items: [], total: 0 })),
-        getAdminDiscoveryRuns(1, 20).catch(() => ({ items: [], total: 0, page: 1, page_size: 20, pages: 1 })),
-        getAdminDiscoveryCandidates(25).catch(() => []),
-      ])
-      setMetrics(m)
-      setSources(s.items)
-      setRuns(r.items)
-      setCandidates(c)
+      const data = await getAdminDiscoveryMetrics()
+      setMetrics(data)
     } catch (err) {
-      setError((err as Error).message)
+      setMetricsError((err as Error).message)
     } finally {
-      setLoading(false)
+      setMetricsLoading(false)
     }
   }
 
+  const loadSources = async () => {
+    setSourcesLoading(true)
+    setSourcesError(null)
+    try {
+      const data = await getAdminDiscoverySources()
+      setSources(data.items)
+    } catch (err) {
+      setSourcesError((err as Error).message)
+    } finally {
+      setSourcesLoading(false)
+    }
+  }
+
+  const loadRuns = async () => {
+    setRunsLoading(true)
+    setRunsError(null)
+    try {
+      const data = await getAdminDiscoveryRuns(1, 20)
+      setRuns(data.items)
+    } catch (err) {
+      setRunsError((err as Error).message)
+    } finally {
+      setRunsLoading(false)
+    }
+  }
+
+  const loadCandidates = async () => {
+    setCandidatesLoading(true)
+    setCandidatesError(null)
+    try {
+      const data = await getAdminDiscoveryCandidates(25)
+      setCandidates(data)
+    } catch (err) {
+      setCandidatesError((err as Error).message)
+    } finally {
+      setCandidatesLoading(false)
+    }
+  }
+
+  const loadAll = () => {
+    loadMetrics()
+    loadSources()
+    loadRuns()
+    loadCandidates()
+  }
+
   useEffect(() => {
-    loadData()
+    loadAll()
   }, [])
 
   const handleTriggerAll = async () => {
     setActionLoading(true)
-    setError(null)
+    setGlobalError(null)
     setSuccessMsg(null)
     try {
       const resultRuns = await triggerAdminDiscoveryAll()
       setSuccessMsg(`Discovery triggered for all enabled sources (${resultRuns.length} runs executed).`)
-      await loadData()
+      loadAll()
     } catch (err) {
-      setError((err as Error).message)
+      setGlobalError((err as Error).message)
     } finally {
       setActionLoading(false)
     }
@@ -83,16 +133,16 @@ export function DiscoveryMonitor() {
 
   const handleTriggerSource = async (sourceId: string | number) => {
     setActionLoading(true)
-    setError(null)
+    setGlobalError(null)
     setSuccessMsg(null)
     try {
       const run = await triggerAdminDiscoverySource(sourceId)
       setSuccessMsg(
-        `Run completed for source #${sourceId}: ${run.events_created} created, ${run.events_updated} updated, ${run.duplicates_skipped} skipped.`
+        `Run #${run.id} finished (${run.status}): ${run.events_created} created, ${run.events_updated} updated, ${run.duplicates_skipped} skipped, ${run.validation_failures} failed.`
       )
-      await loadData()
+      loadAll()
     } catch (err) {
-      setError((err as Error).message)
+      setGlobalError((err as Error).message)
     } finally {
       setActionLoading(false)
     }
@@ -101,9 +151,10 @@ export function DiscoveryMonitor() {
   const handleToggle = async (sourceId: string | number) => {
     try {
       await toggleAdminDiscoverySource(sourceId)
-      await loadData()
+      loadSources()
+      loadMetrics()
     } catch (err) {
-      setError((err as Error).message)
+      setGlobalError((err as Error).message)
     }
   }
 
@@ -111,9 +162,10 @@ export function DiscoveryMonitor() {
     if (!window.confirm('Are you sure you want to delete this discovery source?')) return
     try {
       await deleteAdminDiscoverySource(sourceId)
-      await loadData()
+      loadSources()
+      loadMetrics()
     } catch (err) {
-      setError((err as Error).message)
+      setGlobalError((err as Error).message)
     }
   }
 
@@ -140,7 +192,7 @@ export function DiscoveryMonitor() {
   const handleSaveSource = async (e: FormEvent) => {
     e.preventDefault()
     setActionLoading(true)
-    setError(null)
+    setGlobalError(null)
     try {
       if (editingSourceId) {
         await updateAdminDiscoverySource(editingSourceId, {
@@ -163,61 +215,88 @@ export function DiscoveryMonitor() {
         setSuccessMsg('New discovery source added successfully.')
       }
       setShowSourceModal(false)
-      await loadData()
+      loadSources()
+      loadMetrics()
     } catch (err) {
-      setError((err as Error).message)
+      setGlobalError((err as Error).message)
     } finally {
       setActionLoading(false)
     }
   }
 
+  const getStatusBadgeStyle = (status: string) => {
+    switch (status) {
+      case 'success':
+        return { background: '#2e7d32', color: '#fff' }
+      case 'partial':
+        return { background: '#ef6c00', color: '#fff' }
+      case 'running':
+        return { background: '#1976d2', color: '#fff' }
+      default:
+        return { background: '#c62828', color: '#fff' }
+    }
+  }
+
   return (
     <div className="discovery-monitor">
-      {/* Metrics Row */}
-      <div className="metrics-grid" style={{ marginBottom: '2rem' }}>
-        <div className="metric-card">
-          <span>Total Sources</span>
-          <strong>{metrics?.total_sources ?? sources.length}</strong>
+      {/* Global Notifications */}
+      {globalError && <div className="error-state" style={{ marginBottom: '1rem' }}>{globalError}</div>}
+      {successMsg && (
+        <div className="success-state" style={{ padding: '0.75rem', background: 'rgba(76,175,80,0.1)', border: '1px solid #4caf50', borderRadius: '4px', marginBottom: '1rem' }}>
+          {successMsg}
         </div>
-        <div className="metric-card">
-          <span>Active Sources</span>
-          <strong>{metrics?.enabled_sources ?? 0}</strong>
-        </div>
-        <div className="metric-card">
-          <span>Sources with Errors</span>
-          <strong style={{ color: (metrics?.sources_with_errors ?? 0) > 0 ? '#ff6b6b' : 'inherit' }}>
-            {metrics?.sources_with_errors ?? 0}
-          </strong>
-        </div>
-        <div className="metric-card">
-          <span>Events Auto-Created</span>
-          <strong style={{ color: '#4caf50' }}>{metrics?.total_events_created ?? 0}</strong>
-        </div>
-        <div className="metric-card">
-          <span>Events Updated</span>
-          <strong>{metrics?.total_events_updated ?? 0}</strong>
-        </div>
-        <div className="metric-card">
-          <span>Duplicates Skipped</span>
-          <strong>{metrics?.total_duplicates_skipped ?? 0}</strong>
-        </div>
-        <div className="metric-card">
-          <span>Validation Failures</span>
-          <strong style={{ color: (metrics?.total_validation_failures ?? 0) > 0 ? '#ffa726' : 'inherit' }}>
-            {metrics?.total_validation_failures ?? 0}
-          </strong>
-        </div>
-      </div>
+      )}
 
-      {/* Notifications */}
-      {error && <div className="error-state" style={{ marginBottom: '1rem' }}>{error}</div>}
-      {successMsg && <div className="success-state" style={{ padding: '0.75rem', background: 'rgba(76,175,80,0.1)', border: '1px solid #4caf50', borderRadius: '4px', marginBottom: '1rem' }}>{successMsg}</div>}
+      {/* Metrics Section */}
+      {metricsError ? (
+        <div className="error-state" style={{ marginBottom: '2rem' }}>
+          <span>Failed to load discovery metrics: {metricsError}</span>
+          <button onClick={loadMetrics} style={{ marginLeft: '1rem', cursor: 'pointer' }}>Retry</button>
+        </div>
+      ) : metricsLoading && !metrics ? (
+        <div className="loading-state" style={{ marginBottom: '2rem' }}>Loading discovery metrics...</div>
+      ) : (
+        <div className="metrics-grid" style={{ marginBottom: '2rem' }}>
+          <div className="metric-card">
+            <span>Total Sources</span>
+            <strong>{metrics !== null ? metrics.total_sources : '—'}</strong>
+          </div>
+          <div className="metric-card">
+            <span>Active Sources</span>
+            <strong>{metrics !== null ? metrics.enabled_sources : '—'}</strong>
+          </div>
+          <div className="metric-card">
+            <span>Sources with Errors</span>
+            <strong style={{ color: (metrics?.sources_with_errors ?? 0) > 0 ? '#ff6b6b' : 'inherit' }}>
+              {metrics !== null ? metrics.sources_with_errors : '—'}
+            </strong>
+          </div>
+          <div className="metric-card">
+            <span>Events Auto-Created</span>
+            <strong style={{ color: '#4caf50' }}>{metrics !== null ? metrics.total_events_created : '—'}</strong>
+          </div>
+          <div className="metric-card">
+            <span>Events Updated</span>
+            <strong>{metrics !== null ? metrics.total_events_updated : '—'}</strong>
+          </div>
+          <div className="metric-card">
+            <span>Duplicates Skipped</span>
+            <strong>{metrics !== null ? metrics.total_duplicates_skipped : '—'}</strong>
+          </div>
+          <div className="metric-card">
+            <span>Validation Failures</span>
+            <strong style={{ color: (metrics?.total_validation_failures ?? 0) > 0 ? '#ffa726' : 'inherit' }}>
+              {metrics !== null ? metrics.total_validation_failures : '—'}
+            </strong>
+          </div>
+        </div>
+      )}
 
-      {/* Action Header */}
+      {/* Sources Section Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
-        <h2>Discovery Sources ({sources.length})</h2>
+        <h2>Discovery Sources {sources !== null ? `(${sources.length})` : ''}</h2>
         <div style={{ display: 'flex', gap: '0.75rem' }}>
-          <button onClick={handleTriggerAll} disabled={actionLoading || loading} className="action-button">
+          <button onClick={handleTriggerAll} disabled={actionLoading || sourcesLoading} className="action-button">
             {actionLoading ? 'Running...' : 'Trigger All Sources'}
           </button>
           <button onClick={openAddModal} className="primary-button">
@@ -226,10 +305,17 @@ export function DiscoveryMonitor() {
         </div>
       </div>
 
-      {/* Sources Table */}
-      {sources.length === 0 ? (
-        <div className="empty-state">No discovery sources configured. Click "+ Add New Source" to add one.</div>
-      ) : (
+      {/* Sources Section Body */}
+      {sourcesError ? (
+        <div className="error-state" style={{ marginBottom: '3rem' }}>
+          <span>Failed to load discovery sources: {sourcesError}</span>
+          <button onClick={loadSources} style={{ marginLeft: '1rem', cursor: 'pointer' }}>Retry</button>
+        </div>
+      ) : sourcesLoading && sources === null ? (
+        <div className="loading-state" style={{ marginBottom: '3rem' }}>Loading discovery sources...</div>
+      ) : sources !== null && sources.length === 0 ? (
+        <div className="empty-state" style={{ marginBottom: '3rem' }}>No discovery sources configured. Click "+ Add New Source" to add one.</div>
+      ) : sources !== null ? (
         <div className="table-responsive" style={{ marginBottom: '3rem' }}>
           <table className="admin-table">
             <thead>
@@ -239,7 +325,8 @@ export function DiscoveryMonitor() {
                 <th>Type</th>
                 <th>Region</th>
                 <th>Interval</th>
-                <th>Last Run</th>
+                <th>Last Checked</th>
+                <th>Last Success</th>
                 <th>Last Error</th>
                 <th>Actions</th>
               </tr>
@@ -279,6 +366,9 @@ export function DiscoveryMonitor() {
                   <td>
                     {src.last_crawl_time ? new Date(src.last_crawl_time).toLocaleString() : 'Never'}
                   </td>
+                  <td>
+                    {src.last_success_time ? new Date(src.last_success_time).toLocaleString() : 'Never'}
+                  </td>
                   <td style={{ maxWidth: '200px', wordBreak: 'break-word', color: src.last_error ? '#ff6b6b' : '#888' }}>
                     {src.last_error ? src.last_error.substring(0, 80) : 'None'}
                   </td>
@@ -310,13 +400,20 @@ export function DiscoveryMonitor() {
             </tbody>
           </table>
         </div>
-      )}
+      ) : null}
 
-      {/* Recent Runs Table */}
-      <h2 style={{ marginBottom: '1rem' }}>Recent Discovery Runs ({runs.length})</h2>
-      {runs.length === 0 ? (
+      {/* Recent Runs Section */}
+      <h2 style={{ marginBottom: '1rem' }}>Recent Discovery Runs {runs !== null ? `(${runs.length})` : ''}</h2>
+      {runsError ? (
+        <div className="error-state" style={{ marginBottom: '3rem' }}>
+          <span>Failed to load recent discovery runs: {runsError}</span>
+          <button onClick={loadRuns} style={{ marginLeft: '1rem', cursor: 'pointer' }}>Retry</button>
+        </div>
+      ) : runsLoading && runs === null ? (
+        <div className="loading-state" style={{ marginBottom: '3rem' }}>Loading discovery runs...</div>
+      ) : runs !== null && runs.length === 0 ? (
         <div className="empty-state" style={{ marginBottom: '3rem' }}>No discovery runs executed yet.</div>
-      ) : (
+      ) : runs !== null ? (
         <div className="table-responsive" style={{ marginBottom: '3rem' }}>
           <table className="admin-table">
             <thead>
@@ -325,7 +422,7 @@ export function DiscoveryMonitor() {
                 <th>Source</th>
                 <th>Started</th>
                 <th>Status</th>
-                <th>Checked</th>
+                <th>Pages Checked</th>
                 <th>Created</th>
                 <th>Updated</th>
                 <th>Skipped</th>
@@ -345,9 +442,9 @@ export function DiscoveryMonitor() {
                         padding: '0.2rem 0.4rem',
                         fontSize: '0.75rem',
                         borderRadius: '4px',
-                        background: r.status === 'success' ? '#2e7d32' : r.status === 'running' ? '#f57c00' : '#c62828',
-                        color: '#fff',
                         textTransform: 'uppercase',
+                        fontWeight: 'bold',
+                        ...getStatusBadgeStyle(r.status),
                       }}
                     >
                       {r.status}
@@ -373,13 +470,20 @@ export function DiscoveryMonitor() {
             </tbody>
           </table>
         </div>
-      )}
+      ) : null}
 
-      {/* Candidate Exceptions Table */}
-      <h2 style={{ marginBottom: '1rem' }}>Candidate Exceptions / Validation Failures ({candidates.length})</h2>
-      {candidates.length === 0 ? (
+      {/* Candidate Exceptions Section */}
+      <h2 style={{ marginBottom: '1rem' }}>Candidate Exceptions / Validation Failures {candidates !== null ? `(${candidates.length})` : ''}</h2>
+      {candidatesError ? (
+        <div className="error-state">
+          <span>Failed to load candidate exceptions: {candidatesError}</span>
+          <button onClick={loadCandidates} style={{ marginLeft: '1rem', cursor: 'pointer' }}>Retry</button>
+        </div>
+      ) : candidatesLoading && candidates === null ? (
+        <div className="loading-state">Loading candidate exceptions...</div>
+      ) : candidates !== null && candidates.length === 0 ? (
         <div className="empty-state">No candidate exceptions requiring investigation.</div>
-      ) : (
+      ) : candidates !== null ? (
         <div className="table-responsive">
           <table className="admin-table">
             <thead>
@@ -413,7 +517,7 @@ export function DiscoveryMonitor() {
             </tbody>
           </table>
         </div>
-      )}
+      ) : null}
 
       {/* Source Modal */}
       {showSourceModal && (
@@ -466,14 +570,21 @@ export function DiscoveryMonitor() {
             <h3>Discovery Run Details #{selectedRun.id}</h3>
             <p><strong>Source:</strong> {selectedRun.source_name || `Source #${selectedRun.source_id}`}</p>
             <p><strong>Started:</strong> {new Date(selectedRun.started_at).toLocaleString()}</p>
-            <p><strong>Status:</strong> {selectedRun.status}</p>
+            <p>
+              <strong>Status:</strong>{' '}
+              <span style={{ padding: '0.2rem 0.4rem', borderRadius: '4px', textTransform: 'uppercase', ...getStatusBadgeStyle(selectedRun.status) }}>
+                {selectedRun.status}
+              </span>
+            </p>
+            <p><strong>Pages Checked:</strong> {selectedRun.pages_checked}</p>
+            <p><strong>Candidates Found:</strong> {selectedRun.candidates_found}</p>
             <p><strong>Events Created:</strong> {selectedRun.events_created}</p>
             <p><strong>Events Updated:</strong> {selectedRun.events_updated}</p>
             <p><strong>Duplicates Skipped:</strong> {selectedRun.duplicates_skipped}</p>
             <p><strong>Validation Failures:</strong> {selectedRun.validation_failures}</p>
             {selectedRun.error_message && <p style={{ color: '#ff6b6b' }}><strong>Error:</strong> {selectedRun.error_message}</p>}
             <div style={{ marginTop: '1rem' }}>
-              <strong>Run Metrics:</strong>
+              <strong>Run Metrics & Exceptions:</strong>
               <pre style={{ background: '#111', padding: '1rem', borderRadius: '4px', overflow: 'auto', maxHeight: '200px' }}>
                 {JSON.stringify(selectedRun.metrics, null, 2)}
               </pre>
@@ -489,4 +600,3 @@ export function DiscoveryMonitor() {
     </div>
   )
 }
-

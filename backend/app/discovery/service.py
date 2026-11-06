@@ -1,21 +1,26 @@
 import hashlib
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.discovery.connectors.registry import get_connector
 from app.discovery.deduplicator import find_matching_event
 from app.discovery.fetcher import SafeFetcher
+from app.discovery.lifecycle import (
+    classify_event_lifecycle,
+    expire_past_events,
+    get_effective_end_date,
+)
 from app.discovery.normalizer import (
     clean_text,
     detect_district_and_city,
     detect_event_type,
     normalize_url,
-    parse_and_localize_date,
+    parse_date_with_metadata,
 )
 from app.discovery.validator import validate_candidate
 from app.models import (
@@ -32,6 +37,13 @@ from app.services import generate_unique_event_slug
 
 logger = logging.getLogger(__name__)
 
+RUN_LOCK_TIMEOUT_MINUTES = 15
+
+
+class SourceLockedError(Exception):
+    """Raised when a discovery source is already being processed by another worker or request."""
+    pass
+
 
 def compute_content_hash(payload: dict[str, Any]) -> str:
     """Computes a deterministic SHA256 hash of a dictionary."""
@@ -39,8 +51,54 @@ def compute_content_hash(payload: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def recover_abandoned_runs(db: Session, max_age_minutes: int = RUN_LOCK_TIMEOUT_MINUTES) -> int:
+    """
+    Finds discovery runs that have been stuck in 'running' status longer than max_age_minutes
+    (e.g., due to process crashes or worker restarts) and marks them as failed.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)
+    abandoned_runs = db.scalars(
+        select(DiscoveryRun).where(
+            DiscoveryRun.status == "running",
+            DiscoveryRun.started_at < cutoff,
+        )
+    ).all()
+
+    recovered_count = 0
+    now = datetime.now(timezone.utc)
+    for run in abandoned_runs:
+        run.status = "failed"
+        run.completed_at = now
+        run.error_message = f"Run abandoned: exceeded maximum duration of {max_age_minutes} minutes"
+        run.metrics = {**(run.metrics or {}), "recovered_from_abandoned": True}
+        recovered_count += 1
+        logger.warning("Recovered abandoned discovery run #%d for source #%s", run.id, run.source_id)
+
+    if recovered_count > 0:
+        db.commit()
+    return recovered_count
+
+
+def is_source_locked(db: Session, source_id: int) -> bool:
+    """
+    Checks if there is an active running DiscoveryRun for this source started within
+    the lock window (after clearing abandoned runs).
+    """
+    recover_abandoned_runs(db)
+    active_run = db.scalar(
+        select(DiscoveryRun.id).where(
+            DiscoveryRun.source_id == source_id,
+            DiscoveryRun.status == "running",
+        )
+    )
+    return active_run is not None
+
+
 def _resolve_category(db: Session, event_type: str, title: str) -> Optional[int]:
-    """Finds best matching category for an event."""
+    """
+    Finds best matching category for an event.
+    Returns None if no reliable match is found (no arbitrary fallback).
+    """
     slug_keywords = {
         "hackathon": "technology-hackathons",
         "competition": "technology-hackathons",
@@ -55,23 +113,23 @@ def _resolve_category(db: Session, event_type: str, title: str) -> Optional[int]
         cat = db.scalar(select(Category).where(Category.slug == target_slug, Category.is_active.is_(True)))
         if cat:
             return cat.id
-
-    first_cat = db.scalar(select(Category).where(Category.is_active.is_(True)).order_by(Category.id))
-    return first_cat.id if first_cat else None
+    return None
 
 
 def _resolve_location(db: Session, city: Optional[str], district: Optional[str]) -> Optional[int]:
-    """Finds existing matching location by city or district, falling back to default active location."""
-    if city:
-        loc = db.scalar(select(Location).where(Location.city.ilike(city), Location.is_active.is_(True)))
+    """
+    Finds existing matching location by city or district.
+    Returns None if no reliable location is known (no arbitrary fallback).
+    """
+    if city and city.strip():
+        loc = db.scalar(select(Location).where(Location.city.ilike(city.strip()), Location.is_active.is_(True)))
         if loc:
             return loc.id
-    if district:
-        loc = db.scalar(select(Location).where(Location.district.ilike(district), Location.is_active.is_(True)))
+    if district and district.strip():
+        loc = db.scalar(select(Location).where(Location.district.ilike(district.strip()), Location.is_active.is_(True)))
         if loc:
             return loc.id
-    fallback_loc = db.scalar(select(Location).where(Location.is_active.is_(True)).order_by(Location.id))
-    return fallback_loc.id if fallback_loc else None
+    return None
 
 
 async def run_discovery_for_source(
@@ -81,10 +139,15 @@ async def run_discovery_for_source(
 ) -> DiscoveryRun:
     """
     Executes the ingestion pipeline for a single DiscoverySource.
-    Isolates source errors so calling workflows continue cleanly.
+    Enforces persisted locking, candidate validation, provenance updates,
+    and accurate run statuses.
     """
     if fetcher is None:
         fetcher = SafeFetcher()
+
+    # 1. Concurrency Check / Lock
+    if is_source_locked(db, source_id):
+        raise SourceLockedError(f"DiscoverySource #{source_id} is already actively running")
 
     source = db.get(DiscoverySource, source_id)
     if not source:
@@ -112,7 +175,7 @@ async def run_discovery_for_source(
     try:
         connector = get_connector(source.source_type)
         raw_candidates = await connector.extract_candidates(source, fetcher)
-        run.pages_checked = 1
+        run.pages_checked = max(1, getattr(connector, "pages_fetched", 1))
         run.candidates_found = len(raw_candidates)
 
         for candidate in raw_candidates:
@@ -123,19 +186,19 @@ async def run_discovery_for_source(
             canonical_source_url = normalize_url(candidate.url)
             canonical_reg_url = normalize_url(candidate.registration_url) or canonical_source_url
 
-            start_dt = parse_and_localize_date(candidate.start_date_str)
-            end_dt = parse_and_localize_date(candidate.end_date_str)
-            deadline_dt = parse_and_localize_date(candidate.registration_deadline_str)
+            start_dt, is_start_date_only = parse_date_with_metadata(candidate.start_date_str)
+            end_dt, is_end_date_only = parse_date_with_metadata(candidate.end_date_str)
+            deadline_dt, _ = parse_date_with_metadata(candidate.registration_deadline_str)
 
             event_type = detect_event_type(clean_title, clean_desc, candidate.event_type)
             detected_district, detected_city = detect_district_and_city(
-                candidate.venue, candidate.city or source.region, clean_desc
+                candidate.venue, candidate.city, clean_desc, source.region
             )
             organizer = clean_text(candidate.organizer) or source.name
             venue = clean_text(candidate.venue) or (detected_city if candidate.mode != "online" else None)
             mode = candidate.mode if candidate.mode in ("online", "offline", "hybrid") else "offline"
 
-            # 2. Validation
+            # 2. Candidate Validation
             val_result = validate_candidate(
                 title=clean_title,
                 description=clean_desc,
@@ -146,6 +209,8 @@ async def run_discovery_for_source(
                 source_name=source.name,
                 venue=venue,
                 city=detected_city,
+                registration_deadline=deadline_dt,
+                as_of=now,
             )
 
             if not val_result.is_valid:
@@ -155,6 +220,7 @@ async def run_discovery_for_source(
                     "url": canonical_source_url,
                     "reasons": val_result.rejection_reasons,
                     "evidence": val_result.evidence,
+                    "is_historical": val_result.is_historical,
                 })
                 continue
 
@@ -181,11 +247,12 @@ async def run_discovery_for_source(
                 "venue": venue,
                 "organizer": organizer,
                 "fee": candidate.participation_fee,
+                "cancelled": val_result.is_cancelled,
             }
             content_hash = compute_content_hash(normalized_payload)
 
             if existing_event:
-                # Event already exists in database
+                # Existing event: manage provenance and safe update
                 ev_source = db.scalar(
                     select(EventSource).where(
                         EventSource.event_id == existing_event.id,
@@ -214,12 +281,30 @@ async def run_discovery_for_source(
 
                 # Change detection
                 if ev_source.content_hash != content_hash:
-                    # Content updated from source
                     ev_source.content_hash = content_hash
-                    # Safely update non-conflicting fields
+
+                    # Safe update: never clear existing fields with empty source fields
+                    if clean_title and clean_title != existing_event.title:
+                        existing_event.title = clean_title
+                    if clean_desc and len(clean_desc) > len(existing_event.description or ""):
+                        existing_event.description = clean_desc
+
                     if start_dt:
                         existing_event.start_date = start_dt
                         existing_event.starts_at = start_dt
+
+                        # Controlled Reactivation: If event was expired and a reliable source updates
+                        # start_date to a future date, reactivate event to published
+                        if existing_event.status == "expired" and start_dt > now and not val_result.is_cancelled:
+                            existing_event.status = "published"
+                            existing_event.is_published = True
+                            logger.info(
+                                "Reactivated previously expired event #%d '%s' with new future start_date %s",
+                                existing_event.id,
+                                existing_event.title,
+                                start_dt.isoformat(),
+                            )
+
                     if end_dt:
                         existing_event.end_date = end_dt
                         existing_event.ends_at = end_dt
@@ -234,6 +319,12 @@ async def run_discovery_for_source(
                         existing_event.banner_url = candidate.banner_url
                         existing_event.image_url = candidate.banner_url
 
+                    # Handle cancellation announcement from reliable source
+                    if val_result.is_cancelled:
+                        existing_event.status = "cancelled"
+                        existing_event.is_published = False
+                        logger.info("Marked event #%d '%s' as cancelled from source update", existing_event.id, existing_event.title)
+
                     # Add snapshot
                     snapshot = EventSnapshot(
                         event_source_id=ev_source.id,
@@ -244,6 +335,7 @@ async def run_discovery_for_source(
                     db.add(snapshot)
                     run.events_updated += 1
                 else:
+                    # Content unchanged: no false updates or duplicate snapshots
                     run.duplicates_skipped += 1
 
             else:
@@ -251,6 +343,13 @@ async def run_discovery_for_source(
                 category_id = _resolve_category(db, event_type, clean_title)
                 location_id = _resolve_location(db, detected_city, detected_district)
                 unique_slug = generate_unique_event_slug(db, clean_title)
+
+                tags = candidate.tags or [event_type]
+                if is_start_date_only and "date_only" not in tags:
+                    tags.append("date_only")
+
+                initial_status = "cancelled" if val_result.is_cancelled else "published"
+                initial_published = False if val_result.is_cancelled else True
 
                 new_event = Event(
                     title=clean_title,
@@ -268,7 +367,7 @@ async def run_discovery_for_source(
                     contact_email=candidate.contact_email,
                     event_type=event_type,
                     mode=mode,
-                    status="published",
+                    status=initial_status,
                     city=detected_city,
                     district=detected_district,
                     venue=venue,
@@ -276,8 +375,8 @@ async def run_discovery_for_source(
                     eligibility=candidate.eligibility,
                     participation_fee=candidate.participation_fee,
                     currency=candidate.currency or "INR",
-                    tags=candidate.tags or [event_type],
-                    is_published=True,
+                    tags=tags,
+                    is_published=initial_published,
                     is_featured=False,
                     category_id=category_id,
                     location_id=location_id,
@@ -316,22 +415,37 @@ async def run_discovery_for_source(
                 db.add(snapshot)
                 run.events_created += 1
 
-        run.status = "success"
+        # Determine accurate run status
+        if run.candidates_found == 0:
+            run.status = "success"
+        elif run.events_created == 0 and run.events_updated == 0 and run.duplicates_skipped == 0 and run.validation_failures > 0:
+            # Everything found failed validation
+            run.status = "failed"
+            run.error_message = f"All {run.validation_failures} candidate(s) failed validation checks"
+        elif run.validation_failures > 0:
+            # Some candidates succeeded, some failed
+            run.status = "partial"
+        else:
+            run.status = "success"
+
         run.completed_at = datetime.now(timezone.utc)
         run.metrics = {
             "validation_exceptions_count": len(validation_exceptions),
-            "validation_exceptions": validation_exceptions[:25],  # store top 25
+            "validation_exceptions": validation_exceptions[:50],
         }
 
         source.last_crawl_time = now
-        source.last_success_time = now
-        source.last_error = None
+        if run.status in ("success", "partial"):
+            source.last_success_time = now
+            source.last_error = None
+        else:
+            source.last_error = run.error_message
 
         db.commit()
         db.refresh(run)
         logger.info(
-            "Discovery run completed for '%s': %d created, %d updated, %d skipped, %d failed validation",
-            source.name, run.events_created, run.events_updated, run.duplicates_skipped, run.validation_failures
+            "Discovery run #%d finished for '%s' (status=%s): %d created, %d updated, %d skipped, %d failed",
+            run.id, source.name, run.status, run.events_created, run.events_updated, run.duplicates_skipped, run.validation_failures
         )
         return run
 
@@ -339,7 +453,6 @@ async def run_discovery_for_source(
         logger.exception("Discovery run failed for source '%s': %s", source.name, exc)
         db.rollback()
 
-        # Record failure state
         source.last_crawl_time = now
         source.last_error = str(exc)
 
@@ -359,7 +472,7 @@ async def run_all_enabled_sources(
     db: Session,
     fetcher: Optional[SafeFetcher] = None,
 ) -> list[DiscoveryRun]:
-    """Runs discovery sequentially across all enabled sources, isolating errors."""
+    """Runs discovery across all enabled sources, skipping locked ones and isolating errors."""
     if fetcher is None:
         fetcher = SafeFetcher()
 
@@ -374,34 +487,13 @@ async def run_all_enabled_sources(
         try:
             run = await run_discovery_for_source(db, source.id, fetcher)
             runs.append(run)
+        except SourceLockedError:
+            logger.info("Source %s is locked, skipping in batch run", source.name)
+            continue
         except Exception as exc:
-            logger.error("Error invoking source %s: %s", source.name, exc)
+            logger.error("Error executing source %s: %s", source.name, exc)
             continue
     return runs
-
-
-def expire_past_events(db: Session) -> int:
-    """Marks events as expired when their end_date (or start_date) has passed."""
-    now = datetime.now(timezone.utc)
-    effective_end = func.coalesce(Event.end_date, Event.start_date)
-
-    past_published = db.scalars(
-        select(Event).where(
-            Event.status == "published",
-            effective_end < now,
-        )
-    ).all()
-
-    expired_count = 0
-    for event in past_published:
-        event.status = "expired"
-        event.is_published = False
-        expired_count += 1
-
-    if expired_count > 0:
-        db.commit()
-        logger.info("Expired %d past events", expired_count)
-    return expired_count
 
 
 def get_discovery_metrics(db: Session) -> DiscoveryMetrics:
@@ -416,7 +508,7 @@ def get_discovery_metrics(db: Session) -> DiscoveryMetrics:
 
     last_success = db.scalar(
         select(DiscoveryRun.completed_at)
-        .where(DiscoveryRun.status == "success")
+        .where(DiscoveryRun.status.in_(["success", "partial"]))
         .order_by(desc(DiscoveryRun.completed_at))
         .limit(1)
     )

@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session
@@ -6,8 +6,14 @@ from sqlalchemy.orm import Session
 from app.core.security import get_current_admin
 from app.db.dependencies import get_db
 from app.discovery.fetcher import SafeFetcher
+from app.discovery.lifecycle import (
+    compute_database_diagnostics,
+    reconcile_event_lifecycle,
+)
 from app.discovery.service import (
+    SourceLockedError,
     get_discovery_metrics,
+    is_source_locked,
     run_all_enabled_sources,
     run_discovery_for_source,
 )
@@ -151,7 +157,6 @@ def list_runs(
         ).all()
     )
 
-    # Attach source names
     read_items: list[DiscoveryRunRead] = []
     for run in items:
         source_name = run.source.name if run.source else None
@@ -246,11 +251,25 @@ async def trigger_source(
     db: Session = Depends(get_db),
     _: AdminUser = Depends(auth),
 ):
+    if is_source_locked(db, source_id):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Discovery source #{source_id} is already in progress in another process",
+        )
+
     source = db.get(DiscoverySource, source_id)
     if not source:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Discovery source not found")
+
     fetcher = SafeFetcher()
-    run = await run_discovery_for_source(db, source_id, fetcher)
+    try:
+        run = await run_discovery_for_source(db, source_id, fetcher)
+    except SourceLockedError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Discovery source #{source_id} is already running",
+        )
+
     return DiscoveryRunRead(
         id=run.id,
         source_id=run.source_id,
@@ -270,7 +289,7 @@ async def trigger_source(
 
 
 # ==========================================
-# Metrics & Attribution
+# Metrics, Candidates & Attribution
 # ==========================================
 
 @router.get("/metrics", response_model=DiscoveryMetrics)
@@ -345,3 +364,25 @@ def get_event_sources(
         for s in sources
     ]
 
+
+# ==========================================
+# Lifecycle Diagnostics & Reconciliation
+# ==========================================
+
+@router.get("/lifecycle/diagnostics")
+def get_lifecycle_diagnostics(
+    db: Session = Depends(get_db),
+    _: AdminUser = Depends(auth),
+) -> dict[str, Any]:
+    """Calculates database-wide event lifecycle and temporal diagnostics."""
+    return compute_database_diagnostics(db)
+
+
+@router.post("/lifecycle/reconcile")
+def run_lifecycle_reconciliation(
+    dry_run: bool = Query(default=True, description="When true, performs simulation without persisting changes"),
+    db: Session = Depends(get_db),
+    _: AdminUser = Depends(auth),
+) -> dict[str, Any]:
+    """Generates a dry-run or applied reconciliation report for event lifecycles."""
+    return reconcile_event_lifecycle(db, dry_run=dry_run, preserve_manual_cancellations=True)
