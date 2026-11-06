@@ -38,7 +38,10 @@ from app.services import (
     update_location,
 )
 
+from app.api.discovery import router as discovery_router
+
 router = APIRouter(prefix="/admin", tags=["admin"])
+router.include_router(discovery_router)
 
 
 def auth(admin: AdminUser = Depends(get_current_admin)) -> AdminUser:

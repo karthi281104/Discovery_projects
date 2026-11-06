@@ -84,6 +84,7 @@ class Event(Base):
 
     category: Mapped[Category | None] = relationship(back_populates="events")
     location: Mapped[Location | None] = relationship(back_populates="events")
+    sources: Mapped[list["EventSource"]] = relationship(back_populates="event", cascade="all, delete-orphan")
 
 
 class AdminUser(Base):
@@ -94,3 +95,86 @@ class AdminUser(Base):
     password_hash: Mapped[str] = mapped_column(String(256))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+# ==========================================
+# Milestone 3: Automated Discovery Models
+# ==========================================
+
+class DiscoverySource(Base):
+    __tablename__ = "discovery_sources"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(160), unique=True, index=True, nullable=False)
+    base_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    source_type: Mapped[str] = mapped_column(String(40), index=True, nullable=False)  # "rss", "jsonld", "html", "api"
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    region: Mapped[str] = mapped_column(String(120), default="Tamil Nadu")
+    crawl_interval: Mapped[int] = mapped_column(default=60)  # minutes
+    request_config: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    last_crawl_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_success_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    runs: Mapped[list["DiscoveryRun"]] = relationship(back_populates="source", cascade="all, delete-orphan")
+    event_sources: Mapped[list["EventSource"]] = relationship(back_populates="source", cascade="all, delete-orphan")
+
+
+class DiscoveryRun(Base):
+    __tablename__ = "discovery_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_id: Mapped[int | None] = mapped_column(ForeignKey("discovery_sources.id", ondelete="CASCADE"), index=True, nullable=True)
+
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="running", index=True)  # "running", "success", "failed", "partial"
+
+    pages_checked: Mapped[int] = mapped_column(default=0)
+    candidates_found: Mapped[int] = mapped_column(default=0)
+    events_created: Mapped[int] = mapped_column(default=0)
+    events_updated: Mapped[int] = mapped_column(default=0)
+    duplicates_skipped: Mapped[int] = mapped_column(default=0)
+    validation_failures: Mapped[int] = mapped_column(default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metrics: Mapped[dict] = mapped_column(JSON, default=dict)
+
+    source: Mapped[DiscoverySource | None] = relationship(back_populates="runs")
+
+
+class EventSource(Base):
+    __tablename__ = "event_sources"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[int] = mapped_column(ForeignKey("events.id", ondelete="CASCADE"), index=True, nullable=False)
+    source_id: Mapped[int] = mapped_column(ForeignKey("discovery_sources.id", ondelete="CASCADE"), index=True, nullable=False)
+
+    external_event_id: Mapped[str | None] = mapped_column(String(250), index=True, nullable=True)
+    source_event_url: Mapped[str] = mapped_column(String(1000), nullable=False)
+    canonical_url: Mapped[str] = mapped_column(String(1000), index=True, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_checked: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    event: Mapped[Event] = relationship(back_populates="sources")
+    source: Mapped[DiscoverySource] = relationship(back_populates="event_sources")
+    snapshots: Mapped[list["EventSnapshot"]] = relationship(back_populates="event_source", cascade="all, delete-orphan")
+
+
+class EventSnapshot(Base):
+    __tablename__ = "event_snapshots"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_source_id: Mapped[int] = mapped_column(ForeignKey("event_sources.id", ondelete="CASCADE"), index=True, nullable=False)
+
+    raw_payload: Mapped[dict] = mapped_column(JSON, default=dict)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+    event_source: Mapped[EventSource] = relationship(back_populates="snapshots")

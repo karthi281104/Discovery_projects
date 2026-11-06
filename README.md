@@ -1,14 +1,21 @@
 # Tamil Event Discovery
 
-Tamil Event Discovery is a public event discovery and administration platform focusing on Tamil Nadu events across cultural festivals, technology conferences, arts, literature, workshops, and business expos.
+Tamil Event Discovery is a fully automated public event discovery, ingestion, administration, and publishing platform focused initially on Tamil Nadu, India.
 
-Milestone 2.1 stabilizes the architecture, aligns frontend and backend schemas, provides comprehensive testing across React and FastAPI, enforces strict PostgreSQL migrations, and establishes CI/CD and production security readiness.
+It continuously discovers and indexes publicly available events across:
+- **Hackathons, Coding Contests, and Open-Source Sprints**
+- **College Symposiums, Technical Fests, and Student Competitions**
+- **Technology Conferences, Summits, and Developer Meetups**
+- **Workshops, Bootcamps, and Hands-on Masterclasses**
+- **Startup, Pitch, and Entrepreneurship Summits**
+- **Academic and Research Paper Presentations**
+- **Cultural Festivals, Heritage Gatherings, and Arts Events**
 
 ---
 
 ## Architecture Overview
 
-The system follows a clean modular separation across the backend, frontend, and persistence layers:
+The system consists of an API service, an asynchronous background discovery worker, an authenticated administration portal, and a responsive public web application:
 
 ```
 tamil-event-discovery/
@@ -17,29 +24,46 @@ tamil-event-discovery/
 │   ├── app/
 │   │   ├── api/
 │   │   │   ├── admin.py             # Authenticated administration routes
+│   │   │   ├── discovery.py         # Admin Discovery Monitor APIs
 │   │   │   ├── health.py            # System and database readiness probes
 │   │   │   └── public.py            # Public event search and discovery routes
 │   │   ├── core/
-│   │   │   ├── config.py            # Pydantic Settings with production validation
+│   │   │   ├── config.py            # Settings with production validation & discovery config
 │   │   │   └── security.py          # Password hashing and JWT generation/validation
 │   │   ├── db/
 │   │   │   ├── base.py              # Declarative Base
-│   │   │   └── session.py           # Engine and DB session dependency
-│   │   ├── models/
-│   │   │   └── models.py            # SQLAlchemy 2.0 ORM models (Event, Category, Location, AdminUser)
+│   │   │   ├── dependencies.py      # FastAPI session dependency
+│   │   │   └── session.py           # Engine and DB session factory
+│   │   ├── discovery/               # Automated Event Discovery Engine
+│   │   │   ├── connectors/          # Protocol and format connectors
+│   │   │   │   ├── api.py           # JSON REST API connector
+│   │   │   │   ├── base.py          # BaseConnector interface & RawCandidate dataclass
+│   │   │   │   ├── html.py          # Deterministic HTML & microdata extractor
+│   │   │   │   ├── jsonld.py        # Schema.org JSON-LD Event extractor
+│   │   │   │   ├── registry.py      # Connector factory
+│   │   │   │   └── rss.py           # RSS / Atom XML feed connector
+│   │   │   ├── deduplicator.py      # Multi-tier deduplication & matching logic
+│   │   │   ├── fetcher.py           # SSRF-protected HTTP client with rate limiting
+│   │   │   ├── normalizer.py        # Safe text, canonical URLs, Asia/Kolkata dates
+│   │   │   ├── service.py           # Ingestion pipeline, publishing & metric aggregation
+│   │   │   └── validator.py         # Candidate evidence scoring & publish validation
+│   │   ├── models/                  # SQLAlchemy 2.0 ORM models
+│   │   │   └── models.py            # Event, Category, Location, AdminUser, DiscoverySource, DiscoveryRun, EventSource, EventSnapshot
 │   │   ├── schemas.py               # Pydantic v2 validation models
 │   │   ├── services.py              # Business logic, query filters, and status transitions
+│   │   ├── worker.py                # Standalone scheduled discovery worker process
 │   │   └── main.py                  # FastAPI application with lifespan management
-│   ├── migrations/                  # Alembic migration scripts (0001 -> 0006)
-│   ├── seed.py                      # Idempotent seed data (categories, locations, admin)
-│   └── tests/                       # Comprehensive pytest suite (Unit, API, Migrations)
+│   ├── migrations/                  # Alembic migration scripts (0001 -> 0007)
+│   ├── seed.py                      # Idempotent seed catalogue & default discovery sources
+│   └── tests/                       # Comprehensive pytest suite (Unit, API, Ingestion, Migrations)
 ├── frontend/
 │   ├── src/
-│   │   ├── __tests__/               # Vitest component & API test suites
-│   │   ├── admin.tsx                # Admin dashboard, event form, and category manager
-│   │   ├── api.ts                   # Fetch client with robust header merging & auth handling
+│   │   ├── __tests__/               # Vitest component, API, and discovery monitor test suites
+│   │   ├── admin.tsx                # Admin dashboard, event forms, and tabbed manager
+│   │   ├── api.ts                   # Fetch client with robust header merging & discovery methods
 │   │   ├── App.tsx                  # React Router declarations (v7 compatible)
 │   │   ├── components.tsx           # Shared UI components (EventCard, SearchFilters, etc.)
+│   │   ├── DiscoveryMonitor.tsx     # Admin Discovery Monitor dashboard tab
 │   │   ├── pages.tsx                # Public pages (Home, Events, EventDetail, NotFound)
 │   │   └── types.ts                 # TypeScript type definitions matching backend schemas
 │   ├── vite.config.ts               # Vite configuration with happy-dom test environment
@@ -47,33 +71,64 @@ tamil-event-discovery/
 ├── .github/
 │   └── workflows/
 │       └── ci.yml                   # GitHub Actions workflow (PostgreSQL 16, pytest, vitest, build)
-├── docker-compose.yml               # Multi-container orchestration (PostgreSQL 16, FastAPI, Vite)
+├── docker-compose.yml               # Multi-container orchestration (db, api, worker, web)
 └── .env.example                     # Environment template
 ```
 
 ---
 
-## Tech Stack
+## Discovery & Ingestion Pipeline
 
-- **Backend:** Python 3.11+, FastAPI, SQLAlchemy 2.0, Pydantic v2, Alembic, Psycopg 3.
-- **Frontend:** React 19, TypeScript, React Router 7, Vite.
-- **Testing:** pytest, pytest-anyio, Vitest, Happy-DOM, Testing Library.
-- **Database:** PostgreSQL 16 (production/Docker) or SQLite (local development).
-- **Orchestration:** Docker Compose.
+The automated ingestion pipeline processes events in sequential, isolated phases:
+
+```
+[Discovery Sources Registry]
+             │
+             ▼
+[Scheduled Worker / Admin Trigger]
+             │
+             ▼
+[SSRF-Protected SafeFetcher] (DNS check, private IP block, rate limits, robots.txt)
+             │
+             ▼
+[Connector Extraction] (RSS/Atom, Schema.org JSON-LD, Semantic HTML, REST API)
+             │
+             ▼
+[Field Normalization] (Clean text, canonical URLs, Asia/Kolkata timezone, event types, districts)
+             │
+             ▼
+[Candidate Validation] (Evidence score >= 0.70, non-generic title, valid date & URL)
+             │
+             ├── If Invalid ──► Record Validation Failure in Run Metrics
+             │
+             ▼
+[Deduplication Engine] (Exact External ID, Canonical URL, Ticket Link, or Date + Title Similarity)
+             │
+             ├── Match Found ──► Link EventSource, update changed fields, add snapshot
+             │
+             └── No Match ────► Auto-Publish: create Event with status='published', is_published=True
+                                 Generate unique slug, map category/location, create EventSource
+```
+
+### Key Engineering Features
+- **No Mandatory Admin Approval:** Valid candidates meeting evidence criteria are published automatically and immediately appear on public routes.
+- **SSRF Protection:** Resolves hostnames via DNS and rejects loopback (`127.0.0.0/8`), private networks (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`), link-local (`169.254.0.0/16`), and multicast targets across every hop (including redirects).
+- **Failure Isolation:** Each source runs in an independent boundary. A failure in one source records a failed run and updates source error status without disrupting remaining sources.
+- **Deduplication & Provenance:** Multiple sources referring to the same physical event are linked to a single `Event` via `EventSource` and `EventSnapshot` records.
+- **Automatic Event Expiry:** A scheduled sweep safely marks past published events as `expired` when their end date has passed.
 
 ---
 
 ## Local Development Setup
 
 ### 1. Prerequisites
-- Python 3.11 or higher
-- Node.js 20 or higher, with `npm`
+- Python 3.11+
+- Node.js 20+ with `npm`
 - (Optional) PostgreSQL 16 (or use SQLite for fast local development)
 
-### 2. Backend Setup
+### 2. Backend & Worker Setup
 
 ```powershell
-# Navigate to backend directory
 cd backend
 
 # Create and activate virtual environment
@@ -83,259 +138,165 @@ python -m venv .venv
 # Install dependencies
 pip install -r requirements.txt
 
-# Configure environment variables (SQLite mode by default)
+# Configure environment variables
 $env:APP_ENV="development"
 $env:SECRET_KEY="local-development-secret-key-change-in-production"
 $env:ADMIN_EMAIL="admin@example.com"
 $env:ADMIN_PASSWORD="adminpassword123"
 
-# Run Alembic migrations
+# Run Alembic migrations up to head (0007)
 alembic upgrade head
 
-# Seed initial categories, locations, and admin account
+# Seed initial categories, locations, admin user, and default sources
 python seed.py
 
-# Start backend server
+# Start FastAPI server
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-The interactive API documentation is accessible at:
-- Swagger UI: [http://localhost:8000/docs](http://localhost:8000/docs)
-- OpenAPI JSON: [http://localhost:8000/openapi.json](http://localhost:8000/openapi.json)
-- Health check: [http://localhost:8000/api/v1/health](http://localhost:8000/api/v1/health)
+To run the automated discovery worker locally:
+
+```powershell
+# In a new terminal (inside backend with activated venv):
+python -m app.worker
+
+# Or execute a one-off run across due sources and exit:
+python -m app.worker --once
+```
 
 ### 3. Frontend Setup
 
-In a second terminal:
-
 ```powershell
-# Navigate to frontend directory
 cd frontend
-
-# Install dependencies
 npm install
-
-# Start development server
 npm run dev
 ```
 
-The frontend will start at [http://localhost:5173](http://localhost:5173). Vite automatically proxies `/api` requests to `http://localhost:8000`.
-
----
-
-## PostgreSQL Configuration
-
-To run with local or remote PostgreSQL instead of SQLite:
-
-1. Ensure PostgreSQL is running and create a database:
-   ```sql
-   CREATE DATABASE event_discovery;
-   CREATE USER event_discovery WITH ENCRYPTED PASSWORD 'your_password';
-   GRANT ALL PRIVILEGES ON DATABASE event_discovery TO event_discovery;
-   ```
-2. Set the `DATABASE_URL` environment variable:
-   ```powershell
-   $env:DATABASE_URL="postgresql+psycopg://event_discovery:your_password@localhost:5432/event_discovery"
-   ```
-3. Run migrations and seed data:
-   ```powershell
-   alembic upgrade head
-   python seed.py
-   ```
+Visit [http://localhost:5173](http://localhost:5173). Access the admin dashboard at [http://localhost:5173/admin/login](http://localhost:5173/admin/login).
 
 ---
 
 ## Environment Configuration
 
-Configuration is managed via Pydantic Settings with automatic environment variable parsing.
-
 | Variable | Default | Purpose | Production Rules |
 | :--- | :--- | :--- | :--- |
-| `APP_ENV` | `development` | Runtime environment (`development`, `test`, `production`) | Must be set to `production` in production. |
-| `DATABASE_URL` | `sqlite:///./event_discovery.db` | SQLAlchemy connection string | **Must** use PostgreSQL in production. SQLite is rejected when `APP_ENV=production`. |
-| `SECRET_KEY` | Development default | Key for signing JWT auth tokens | **Must** be changed to a cryptographically random string (min 32 chars). Default is rejected. |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | `60` | Token validity lifetime in minutes | Configurable. |
+| `APP_ENV` | `development` | Runtime environment (`development`, `test`, `production`) | Must be `production` in production. |
+| `DATABASE_URL` | `sqlite:///./event_discovery.db` | Database connection string | Must use PostgreSQL in production. |
+| `SECRET_KEY` | Default | Key for signing JWT auth tokens | Must be at least 32 characters in production. |
 | `ADMIN_EMAIL` | `admin@example.com` | Default admin email | Must be explicitly configured. |
-| `ADMIN_PASSWORD` | `change-me` | Initial admin password | Default password is **rejected** when `APP_ENV=production`. |
-| `CORS_ORIGINS` | `http://localhost:5173` | Allowed CORS origins (comma-separated) | Should match your deployed frontend domain. |
-
-> [!IMPORTANT]
-> When `APP_ENV=production`, the application validates security parameters at startup and crashes immediately if default credentials, weak secret keys, or SQLite databases are detected.
+| `ADMIN_PASSWORD` | `change-me` | Initial admin password | Default password rejected in production. |
+| `DISCOVERY_ENABLED` | `true` | Master switch for automated discovery worker | Enable or disable crawling globally. |
+| `DISCOVERY_INTERVAL_MINUTES` | `60` | Default discovery loop interval in minutes | Periodic check interval. |
+| `DISCOVERY_REQUEST_TIMEOUT` | `15` | Timeout for outbound HTTP requests in seconds | Prevents slow sources from hanging worker. |
+| `DISCOVERY_MAX_PAGES_PER_SOURCE`| `10` | Maximum pages fetched per run per source | Prevents unbounded crawling. |
+| `DISCOVERY_MAX_CONCURRENT_SOURCES`| `3` | Maximum sources crawled concurrently | Protects CPU and network bandwidth. |
+| `DISCOVERY_USER_AGENT` | `TamilEventDiscoveryBot/1.0...` | Custom User-Agent header for crawl requests | Follows polite web crawler conventions. |
 
 ---
 
 ## Database Migrations (Alembic)
 
-Alembic is the **authoritative single source of truth** for database schema definitions. `Base.metadata.create_all()` is strictly bypassed in favor of Alembic.
-
 ```powershell
 cd backend
 
-# Apply all migrations to the latest revision
+# Apply all migrations to the latest revision (0007)
 alembic upgrade head
 
 # Roll back all migrations to clean slate
 alembic downgrade base
-
-# Roll back one migration step
-alembic downgrade -1
-
-# Show current migration state
-alembic current
-
-# Show migration history
-alembic history --verbose
 
 # Verify single head
 alembic heads
 ```
 
 ### Migration History
-- `0001_initial`: Initial schema for categories, locations, events, and admin users.
-- `0002_event_slug_featured`: Adds `slug` and `is_featured` to events with cross-database safe ID casting.
-- `0003_milestone_event_fields`: Normalized date, organizer, registration URL, and status columns.
-- `0004_complete_milestone2_schema`: Extended fields (`registration_deadline`, `fee`, `currency`, `tags`, `eligibility`, `contact_email`, `official_website`), indexes, and category `icon`.
-- `0005_repair_category_icon`: Idempotent batch alteration ensuring `icon` on categories across existing deployments.
-- `0006_location_verified_venue`: Adds `is_verified_venue` flag distinguishing physical venues from geographic district hubs.
+- `0001_initial`: Base schema for categories, locations, events, admin users.
+- `0002_event_slug_featured`: Slugs, featured flag, ID casting compatibility.
+- `0003_milestone_event_fields`: Normalized date, organizer, registration columns.
+- `0004_complete_milestone2_schema`: Extended fields, indexes, category icon.
+- `0005_repair_category_icon`: Idempotent batch alteration for icon column.
+- `0006_location_verified_venue`: Venue verification flag on physical locations.
+- `0007_automated_discovery_pipeline`: Source registry (`discovery_sources`), run history (`discovery_runs`), source provenance (`event_sources`), and raw audit snapshots (`event_snapshots`).
 
 ---
 
-## Seed Data Management
+## Production Deployment with Docker Compose
 
-The seed script (`backend/seed.py`) is completely **idempotent** and can be run repeatedly without duplicating records or corrupting existing IDs.
-
-```powershell
-cd backend
-
-# Standard seed (categories, locations, admin user, and sample event if in development)
-python seed.py
-
-# Seed catalogue without sample events
-python seed.py --no-sample
-```
-
-- **Categories:** Populates core Tamil Nadu event domains (Cultural & Festivals, Music & Dance, Literature & Poetry, Tech & Startups, Sports & Fitness, Food & Culinary, Workshops & Heritage).
-- **Locations:** Populates verified venues with complete street addresses (e.g., Chennai Trade Centre, Kalaivanar Arangam, Codissia Complex) and regional geographic hubs marked with `is_verified_venue = False`.
-- **Sample Events:** Created **only** when `APP_ENV != "production"`.
-
----
-
-## Running with Docker Compose
-
-Docker Compose runs the entire stack with PostgreSQL 16, backend API, and frontend web client in isolated containers:
+Docker Compose coordinates PostgreSQL 16, FastAPI backend, automated discovery worker, and Vite frontend web client:
 
 ```powershell
-# Copy environment file and adjust secrets
+# Copy environment file
 cp .env.example .env
 
-# Build and start all services
-docker compose up --build
+# Build and start all 4 services
+docker compose up --build -d
 
-# Run in background
-docker compose up -d
+# Check service logs
+docker compose logs -f api
+docker compose logs -f worker
+docker compose logs -f web
 
-# View logs
-docker compose logs -f
-
-# Stop and remove containers (data preserved in postgres_data volume)
+# Stop services
 docker compose down
 ```
 
-- Web UI: [http://localhost:5173](http://localhost:5173)
-- API: [http://localhost:8000](http://localhost:8000)
-- PostgreSQL container: Port `5432`
+Services:
+- `db`: PostgreSQL 16 Alpine container with persistent volume and health check probe.
+- `api`: FastAPI REST API on port `8000`.
+- `worker`: Standalone discovery worker running `python -m app.worker`.
+- `web`: Web UI on port `5173`.
 
 ---
 
-## Testing & Quality Assurance
-
-### Backend Tests (pytest)
-Runs unit, integration, authentication, authorization, filtering, validation, and migration lifecycle tests:
-
-```powershell
-cd backend
-pytest -v
-
-# Or run specific test modules:
-pytest tests/test_events_crud.py -v
-pytest tests/test_public_api.py -v
-pytest tests/test_admin_auth_and_actions.py -v
-pytest tests/test_postgres_migrations.py -v
-```
-
-> [!NOTE]
-> `tests/test_postgres_migrations.py` validates SQLite migration upgrade/downgrade/upgrade lifecycle and data preservation by default. When `TEST_POSTGRES_URL` is set (or in CI), it executes full migration testing against PostgreSQL 16.
-
-### Frontend Tests (Vitest)
-Runs unit, component, API client, and routing tests:
-
-```powershell
-cd frontend
-npm test
-```
-
-### Production Build & Type Checking
-Verifies TypeScript compiler types and builds optimized Vite bundle:
-
-```powershell
-cd frontend
-npm run build
-```
-
----
-
-## API Endpoints Reference
-
-### Public API (Unauthenticated)
-
-Public routes strictly return only active, published events. Draft, pending, rejected, cancelled, and expired events are excluded.
-
-| Method | Endpoint | Query Parameters | Description |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/api/v1/events` | `page`, `page_size`, `search`, `category`, `district`, `city`, `time_filter`, `sort_by` | Paginated event listing with filtering and search across title, short description, and description. |
-| `GET` | `/api/v1/events/{slug}` | — | Retrieve single published event details by unique slug. |
-| `GET` | `/api/v1/events/featured` | `limit` (default: 6) | List curated featured published events. |
-| `GET` | `/api/v1/events/upcoming` | `limit` (default: 10) | List upcoming published events (chronological order). |
-| `GET` | `/api/v1/categories` | — | List all active event categories. |
-| `GET` | `/api/v1/locations` | `district`, `verified_only` | List active Tamil Nadu locations with venue verification status. |
-| `GET` | `/api/v1/health` | — | Health probe returning database status and timestamp. |
-
-### Admin API (Protected — Bearer JWT)
+## Admin Discovery Monitor API Reference
 
 Send `Authorization: Bearer <token>` obtained via `/api/v1/admin/login`.
 
 | Method | Endpoint | Description |
 | :--- | :--- | :--- |
-| `POST` | `/api/v1/admin/login` | Authenticate admin credentials and retrieve JWT bearer access token. |
-| `GET` | `/api/v1/admin/me` | Current authenticated admin profile. |
-| `GET` | `/api/v1/admin/metrics` | Dashboard statistics (total events, published, pending review, categories). |
-| `GET` | `/api/v1/admin/events` | List all events (including drafts, pending, published, rejected, cancelled). |
-| `POST` | `/api/v1/admin/events` | Create new event with server-side validation. |
-| `GET` | `/api/v1/admin/events/{id}` | Retrieve specific event by ID for viewing or editing. |
-| `PUT` | `/api/v1/admin/events/{id}` | Update existing event details and metadata. |
-| `DELETE`| `/api/v1/admin/events/{id}` | Permanently delete an event. |
-| `PATCH`| `/api/v1/admin/events/{id}/publish` | Publish event (enforces publish requirements & valid transition matrix). |
-| `PATCH`| `/api/v1/admin/events/{id}/reject` | Reject event with reason note. |
-| `PATCH`| `/api/v1/admin/events/{id}/feature` | Toggle featured status (`{"is_featured": true/false}`). |
-| `GET` | `/api/v1/admin/categories` | List all categories (active & inactive). |
-| `POST` | `/api/v1/admin/categories` | Create new category. |
-| `PUT` | `/api/v1/admin/categories/{id}` | Update category details. |
-| `DELETE`| `/api/v1/admin/categories/{id}` | Deactivate or remove category. |
-| `GET` | `/api/v1/admin/locations` | List all locations with venue verification flag. |
-| `POST` | `/api/v1/admin/locations` | Create new location with verified venue metadata. |
+| `GET` | `/api/v1/admin/discovery/sources` | List all registered discovery sources. |
+| `POST` | `/api/v1/admin/discovery/sources` | Register a new discovery source. |
+| `PUT` | `/api/v1/admin/discovery/sources/{id}` | Update source parameters, region, or interval. |
+| `PATCH`| `/api/v1/admin/discovery/sources/{id}/toggle` | Enable or disable a discovery source. |
+| `DELETE`| `/api/v1/admin/discovery/sources/{id}` | Remove a discovery source. |
+| `GET` | `/api/v1/admin/discovery/runs` | Paginated discovery run execution history. |
+| `GET` | `/api/v1/admin/discovery/runs/{id}` | Detailed run metrics and validation exceptions. |
+| `POST` | `/api/v1/admin/discovery/run` | Manually trigger discovery across all enabled sources. |
+| `POST` | `/api/v1/admin/discovery/run/{source_id}` | Manually trigger discovery for a specific source. |
+| `GET` | `/api/v1/admin/discovery/metrics` | System-wide discovery metrics (created, updated, skipped, errors). |
+| `GET` | `/api/v1/admin/discovery/candidates` | List recent candidate validation exceptions for investigation. |
+| `GET` | `/api/v1/admin/discovery/events/{id}/sources` | Inspect source attribution and provenance for an event. |
 
 ---
 
-## Continuous Integration (CI)
+## Testing & Verification
 
-GitHub Actions workflow (`.github/workflows/ci.yml`) runs automatically on push and pull requests to `main` and `master`:
+### Backend Tests (pytest)
+```powershell
+cd backend
+pytest -v
+```
+All **58 tests** pass across unit, API, SSRF protection, connectors, normalizer, validator, deduplication, auto-publishing, and migration validation.
 
-1. **Backend Job:**
-   - Spins up a live `postgres:16-alpine` service container with health checks.
-   - Installs dependencies from `backend/requirements.txt`.
-   - Runs Alembic migrations (`upgrade head` -> `downgrade base` -> `upgrade head`) against PostgreSQL.
-   - Executes `pytest` against PostgreSQL, asserting 100% test pass rate for all unit, API, and migration validation suites.
-2. **Frontend Job:**
-   - Sets up Node.js 22 with dependency caching.
-   - Executes Vitest component, routing, and API test suites.
-   - Executes TypeScript compiler check (`tsc -b`) and Vite production build.
+### Frontend Tests (Vitest)
+```powershell
+cd frontend
+npm test
+```
+All **27 tests** pass across 5 test suites.
+
+### Frontend Production Build
+```powershell
+cd frontend
+npm run build
+```
+Compiles TypeScript types (`tsc -b`) and generates production Vite bundle with 0 errors.
+
+---
+
+## Known Source Limitations & Scope
+
+- **Supported Formats:** RSS/Atom XML feeds, Schema.org JSON-LD event metadata embedded in HTML, semantic HTML listings with configurable CSS selectors, and REST JSON APIs.
+- **JavaScript Rendering:** Headless browser rendering is not required for standard public feeds or structured Schema.org data. Websites relying on client-side SPA rendering without Schema.org tags require their API feed to be registered directly.
+- **Robots.txt & Terms:** The fetcher respects host rate limits and robots.txt guidelines. Sources gated by CAPTCHAs, bot protections, or paywalls are strictly excluded.
+- **Coverage Measurement:** Source coverage is measured empirically through persistent metrics (`pages_checked`, `candidates_found`, `events_created`, `events_updated`, `duplicates_skipped`, `validation_failures`) visible in the Admin Discovery Monitor.

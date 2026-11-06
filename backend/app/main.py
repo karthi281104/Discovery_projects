@@ -1,3 +1,5 @@
+import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -11,9 +13,26 @@ from app.core.security import hash_password
 from app.db.session import engine
 from app.models import AdminUser
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # In local development mode, automatically ensure Alembic migrations are up to date
+    if settings.app_env.lower() == "development":
+        try:
+            from alembic import command
+            from alembic.config import Config
+            backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            alembic_ini = os.path.join(backend_dir, "alembic.ini")
+            if os.path.exists(alembic_ini):
+                config = Config(alembic_ini)
+                config.set_main_option("script_location", os.path.join(backend_dir, "migrations"))
+                command.upgrade(config, "head")
+                logger.info("Alembic migrations verified up-to-date (head).")
+        except Exception as exc:
+            logger.warning("Auto-migration during development startup encountered: %s", exc)
+
     try:
         from sqlalchemy.orm import Session
         with Session(engine) as db:
@@ -21,8 +40,11 @@ async def lifespan(app: FastAPI):
                 if settings.app_env.lower() != "production" or settings.admin_password not in {"change-me", "admin"}:
                     db.add(AdminUser(email=settings.admin_email, password_hash=hash_password(settings.admin_password)))
                     db.commit()
-    except Exception:
-        pass
+                    logger.info("Initialized default admin user: %s", settings.admin_email)
+    except Exception as exc:
+        logger.error("Failed to initialize admin account during application startup: %s", exc)
+        if settings.app_env.lower() == "production":
+            raise RuntimeError(f"Startup initialization failed in production: {exc}") from exc
     yield
 
 
