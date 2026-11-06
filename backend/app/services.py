@@ -183,6 +183,10 @@ def update_event(db: Session, event_id: int, data: EventUpdate | EventCreate) ->
     if new_start and new_end and new_end < new_start:
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "end_date must not be earlier than start_date")
 
+    new_deadline = values.get("registration_deadline", event.registration_deadline)
+    if new_deadline and new_start and new_deadline > new_start:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "registration_deadline must not be after start_date")
+
     # Slug handling if changed
     if "slug" in values and values["slug"]:
         clean_slug = _slugify(values["slug"])

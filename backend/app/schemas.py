@@ -273,3 +273,131 @@ class AdminMetrics(BaseModel):
     featured_events: int
     total_categories: int
     total_locations: int
+
+
+# ==========================================
+# Milestone 3: Discovery Schemas
+# ==========================================
+
+SourceType = Literal["rss", "jsonld", "html", "api"]
+
+
+class DiscoverySourceBase(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    base_url: str = Field(min_length=1, max_length=500)
+    source_type: SourceType
+    is_enabled: bool = True
+    region: str = Field(default="Tamil Nadu", max_length=120)
+    crawl_interval: int = Field(default=60, ge=1)
+    request_config: dict = Field(default_factory=dict)
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, v: str) -> str:
+        url = v.strip()
+        if not (url.startswith("http://") or url.startswith("https://")):
+            raise ValueError("base_url must begin with http:// or https://")
+        return url
+
+
+class DiscoverySourceCreate(DiscoverySourceBase):
+    pass
+
+
+class DiscoverySourceUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=160)
+    base_url: str | None = Field(default=None, min_length=1, max_length=500)
+    source_type: SourceType | None = None
+    is_enabled: bool | None = None
+    region: str | None = Field(default=None, max_length=120)
+    crawl_interval: int | None = Field(default=None, ge=1)
+    request_config: dict | None = None
+
+    @field_validator("base_url")
+    @classmethod
+    def validate_base_url(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        url = v.strip()
+        if not (url.startswith("http://") or url.startswith("https://")):
+            raise ValueError("base_url must begin with http:// or https://")
+        return url
+
+
+class DiscoverySourceRead(DiscoverySourceBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    last_crawl_time: datetime | None = None
+    last_success_time: datetime | None = None
+    last_error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class DiscoverySourceList(BaseModel):
+    items: list[DiscoverySourceRead]
+    total: int
+
+
+class DiscoveryRunRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    source_id: int | None = None
+    source_name: str | None = None
+    started_at: datetime
+    completed_at: datetime | None = None
+    status: str
+    pages_checked: int = 0
+    candidates_found: int = 0
+    events_created: int = 0
+    events_updated: int = 0
+    duplicates_skipped: int = 0
+    validation_failures: int = 0
+    error_message: str | None = None
+    metrics: dict = Field(default_factory=dict)
+
+
+class DiscoveryRunList(BaseModel):
+    items: list[DiscoveryRunRead]
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
+class EventSourceRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    event_id: int
+    source_id: int
+    source_name: str | None = None
+    external_event_id: str | None = None
+    source_event_url: str
+    canonical_url: str
+    content_hash: str
+    first_seen: datetime
+    last_seen: datetime
+    last_checked: datetime
+
+
+class DiscoveryCandidateRead(BaseModel):
+    title: str
+    source_url: str
+    source_name: str | None = None
+    start_date: datetime | None = None
+    validation_status: str  # "valid", "invalid", "duplicate"
+    rejection_reasons: list[str] = Field(default_factory=list)
+    confidence_score: float = 0.0
+
+
+class DiscoveryMetrics(BaseModel):
+    total_sources: int
+    enabled_sources: int
+    sources_with_errors: int
+    last_successful_run: datetime | None
+    total_pages_checked: int
+    total_candidates_found: int
+    total_events_created: int
+    total_events_updated: int
+    total_duplicates_skipped: int
+    total_validation_failures: int

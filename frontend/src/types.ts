@@ -91,3 +91,93 @@ export type AdminMetrics = {
   total_categories: number
   total_locations: number
 }
+
+
+// ==========================================
+// Milestone 3: Discovery Types
+// ==========================================
+
+export type SourceType = 'rss' | 'jsonld' | 'html' | 'api'
+
+export type DiscoverySource = {
+  id: number | string
+  name: string
+  base_url: string
+  source_type: SourceType
+  is_enabled: boolean
+  region: string
+  crawl_interval: number
+  request_config: Record<string, any>
+  last_crawl_time?: string | null
+  last_success_time?: string | null
+  last_error?: string | null
+  created_at: string
+  updated_at: string
+}
+
+export type DiscoverySourceList = {
+  items: DiscoverySource[]
+  total: number
+}
+
+export type DiscoveryRun = {
+  id: number | string
+  source_id?: number | string | null
+  source_name?: string | null
+  started_at: string
+  completed_at?: string | null
+  status: 'running' | 'success' | 'failed' | 'partial'
+  pages_checked: number
+  candidates_found: number
+  events_created: number
+  events_updated: number
+  duplicates_skipped: number
+  validation_failures: number
+  error_message?: string | null
+  metrics?: Record<string, any>
+}
+
+export type DiscoveryRunList = {
+  items: DiscoveryRun[]
+  total: number
+  page: number
+  page_size: number
+  pages: number
+}
+
+export type DiscoveryMetrics = {
+  total_sources: number
+  enabled_sources: number
+  sources_with_errors: number
+  last_successful_run?: string | null
+  total_pages_checked: number
+  total_candidates_found: number
+  total_events_created: number
+  total_events_updated: number
+  total_duplicates_skipped: number
+  total_validation_failures: number
+}
+
+export type DiscoveryCandidate = {
+  title: string
+  source_url: string
+  source_name?: string | null
+  start_date?: string | null
+  validation_status: string
+  rejection_reasons: string[]
+  confidence_score: number
+}
+
+export type EventSource = {
+  id: number | string
+  event_id: number | string
+  source_id: number | string
+  source_name?: string | null
+  external_event_id?: string | null
+  source_event_url: string
+  canonical_url: string
+  content_hash: string
+  first_seen: string
+  last_seen: string
+  last_checked: string
+}

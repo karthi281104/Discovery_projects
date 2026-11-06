@@ -1,4 +1,17 @@
-import type { AdminMetrics, Category, Event, EventList, Location } from './types'
+import type {
+  AdminMetrics,
+  Category,
+  DiscoveryCandidate,
+  DiscoveryMetrics,
+  DiscoveryRun,
+  DiscoveryRunList,
+  DiscoverySource,
+  DiscoverySourceList,
+  Event,
+  EventList,
+  EventSource,
+  Location,
+} from './types'
 
 const request = async <T>(path: string, options?: RequestInit): Promise<T> => {
   const response = await fetch(`/api/v1${path}`, {
@@ -102,3 +115,47 @@ export const updateAdminLocation = (id: string | number, data: Partial<Location>
   adminRequest<Location>(`/admin/locations/${id}`, { method: 'PUT', body: JSON.stringify(data) })
 export const deleteAdminLocation = (id: string | number) =>
   adminRequest<void>(`/admin/locations/${id}`, { method: 'DELETE' })
+
+
+// ==========================================
+// Milestone 3: Discovery API Endpoints
+// ==========================================
+
+export const getAdminDiscoverySources = (enabledOnly = false) =>
+  adminRequest<DiscoverySourceList>(`/admin/discovery/sources${enabledOnly ? '?enabled_only=true' : ''}`)
+
+export const createAdminDiscoverySource = (data: Partial<DiscoverySource>) =>
+  adminRequest<DiscoverySource>('/admin/discovery/sources', { method: 'POST', body: JSON.stringify(data) })
+
+export const updateAdminDiscoverySource = (id: string | number, data: Partial<DiscoverySource>) =>
+  adminRequest<DiscoverySource>(`/admin/discovery/sources/${id}`, { method: 'PUT', body: JSON.stringify(data) })
+
+export const toggleAdminDiscoverySource = (id: string | number) =>
+  adminRequest<DiscoverySource>(`/admin/discovery/sources/${id}/toggle`, { method: 'PATCH' })
+
+export const deleteAdminDiscoverySource = (id: string | number) =>
+  adminRequest<void>(`/admin/discovery/sources/${id}`, { method: 'DELETE' })
+
+export const getAdminDiscoveryRuns = (page = 1, pageSize = 20, status?: string) => {
+  const query = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
+  if (status) query.set('status', status)
+  return adminRequest<DiscoveryRunList>(`/admin/discovery/runs?${query.toString()}`)
+}
+
+export const getAdminDiscoveryRunDetail = (runId: string | number) =>
+  adminRequest<DiscoveryRun>(`/admin/discovery/runs/${runId}`)
+
+export const triggerAdminDiscoveryAll = () =>
+  adminRequest<DiscoveryRun[]>('/admin/discovery/run', { method: 'POST' })
+
+export const triggerAdminDiscoverySource = (sourceId: string | number) =>
+  adminRequest<DiscoveryRun>(`/admin/discovery/run/${sourceId}`, { method: 'POST' })
+
+export const getAdminDiscoveryMetrics = () =>
+  adminRequest<DiscoveryMetrics>('/admin/discovery/metrics')
+
+export const getAdminDiscoveryCandidates = (limit = 50) =>
+  adminRequest<DiscoveryCandidate[]>(`/admin/discovery/candidates?limit=${limit}`)
+
+export const getAdminEventSources = (eventId: string | number) =>
+  adminRequest<EventSource[]>(`/admin/discovery/events/${eventId}/sources`)

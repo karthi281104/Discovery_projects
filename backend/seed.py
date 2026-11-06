@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.security import hash_password
 from app.db.session import engine
-from app.models import AdminUser, Category, Event, Location
+from app.models import AdminUser, Category, DiscoverySource, Event, Location
 
 CATEGORIES = [
     {
@@ -265,6 +265,68 @@ def seed_database(populate_sample_event: bool = True) -> None:
                 )
                 db.add(sample_event)
                 print(f"Created development sample event: {sample_event.title}")
+
+        # 6. Default Discovery Sources (idempotent)
+        DEFAULT_DISCOVERY_SOURCES = [
+            {
+                "name": "KnowAFest - College Festivals & Technical Symposiums",
+                "base_url": "https://www.knowafest.com/feed.xml",
+                "source_type": "rss",
+                "region": "Tamil Nadu",
+                "crawl_interval": 60,
+                "is_enabled": True,
+                "request_config": {},
+            },
+            {
+                "name": "Python India Developer Events Feed",
+                "base_url": "https://in.pycon.org/feed.xml",
+                "source_type": "rss",
+                "region": "All India / Tamil Nadu",
+                "crawl_interval": 120,
+                "is_enabled": True,
+                "request_config": {},
+            },
+            {
+                "name": "Free Software Community India Events (JSON-LD)",
+                "base_url": "https://fsci.in/events",
+                "source_type": "jsonld",
+                "region": "Tamil Nadu",
+                "crawl_interval": 180,
+                "is_enabled": True,
+                "request_config": {},
+            },
+            {
+                "name": "Tamil Nadu Tech Communities API Feed",
+                "base_url": "https://chennaipy.org/events.json",
+                "source_type": "api",
+                "region": "Chennai",
+                "crawl_interval": 60,
+                "is_enabled": False,
+                "request_config": {
+                    "items_key": "events",
+                    "field_mapping": {
+                        "title": "name",
+                        "start_date": "time",
+                        "url": "link"
+                    }
+                },
+            },
+        ]
+
+        for src_info in DEFAULT_DISCOVERY_SOURCES:
+            src = db.scalar(select(DiscoverySource).where(DiscoverySource.name == src_info["name"]))
+            if not src:
+                src = DiscoverySource(
+                    name=src_info["name"],
+                    base_url=src_info["base_url"],
+                    source_type=src_info["source_type"],
+                    region=src_info["region"],
+                    crawl_interval=src_info["crawl_interval"],
+                    is_enabled=src_info["is_enabled"],
+                    request_config=src_info["request_config"],
+                )
+                db.add(src)
+                print(f"Created discovery source: {src.name} ({src.source_type})")
 
         db.commit()
         print("Seeding completed successfully.")

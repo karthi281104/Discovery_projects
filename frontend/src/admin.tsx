@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { DiscoveryMonitor } from './DiscoveryMonitor'
 import {
   adminLogin,
   createAdminCategory,
@@ -75,7 +76,7 @@ function RedirectToLogin() {
 
 export function AdminDashboard() {
   const navigate = useNavigate()
-  const [activeTab, setActiveTab] = useState<'events' | 'categories' | 'locations'>('events')
+  const [activeTab, setActiveTab] = useState<'events' | 'categories' | 'locations' | 'discovery'>('events')
   const [events, setEvents] = useState<EventList | null>(null)
   const [metrics, setMetrics] = useState<AdminMetrics | null>(null)
   const [categories, setCategories] = useState<Category[]>([])
@@ -287,6 +288,12 @@ export function AdminDashboard() {
         >
           Locations ({locations.length})
         </button>
+        <button
+          style={{ fontWeight: activeTab === 'discovery' ? 'bold' : 'normal', background: 'none', border: 'none', color: activeTab === 'discovery' ? '#fff' : '#888', cursor: 'pointer', fontSize: '1rem' }}
+          onClick={() => setActiveTab('discovery')}
+        >
+          Discovery Monitor
+        </button>
       </div>
 
       {activeTab === 'events' && (
@@ -497,6 +504,8 @@ export function AdminDashboard() {
           </div>
         </div>
       )}
+
+      {activeTab === 'discovery' && <DiscoveryMonitor />}
     </main>
   )
 }

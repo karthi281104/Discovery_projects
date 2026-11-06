@@ -28,11 +28,38 @@ services:
       SECRET_KEY: ${SECRET_KEY:-replace-with-a-long-random-secret}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@example.com}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-change-me}
+      DISCOVERY_ENABLED: ${DISCOVERY_ENABLED:-true}
+      DISCOVERY_INTERVAL_MINUTES: ${DISCOVERY_INTERVAL_MINUTES:-60}
+      DISCOVERY_REQUEST_TIMEOUT: ${DISCOVERY_REQUEST_TIMEOUT:-15}
+      DISCOVERY_MAX_PAGES_PER_SOURCE: ${DISCOVERY_MAX_PAGES_PER_SOURCE:-10}
+      DISCOVERY_MAX_CONCURRENT_SOURCES: ${DISCOVERY_MAX_CONCURRENT_SOURCES:-3}
+      DISCOVERY_USER_AGENT: ${DISCOVERY_USER_AGENT:-TamilEventDiscoveryBot/1.0 (+https://github.com/karthi281104/Discovery_projects)}
     ports:
       - "8000:8000"
     depends_on:
       db:
         condition: service_healthy
+
+  worker:
+    build: ./backend
+    container_name: tamil-event-discovery-worker
+    restart: unless-stopped
+    command: ["python", "-m", "app.worker"]
+    environment:
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-event_discovery}:${POSTGRES_PASSWORD:-change_me_local_only}@db:5432/${POSTGRES_DB:-event_discovery}
+      SECRET_KEY: ${SECRET_KEY:-replace-with-a-long-random-secret}
+      DISCOVERY_ENABLED: ${DISCOVERY_ENABLED:-true}
+      DISCOVERY_INTERVAL_MINUTES: ${DISCOVERY_INTERVAL_MINUTES:-60}
+      DISCOVERY_REQUEST_TIMEOUT: ${DISCOVERY_REQUEST_TIMEOUT:-15}
+      DISCOVERY_MAX_PAGES_PER_SOURCE: ${DISCOVERY_MAX_PAGES_PER_SOURCE:-10}
+      DISCOVERY_MAX_CONCURRENT_SOURCES: ${DISCOVERY_MAX_CONCURRENT_SOURCES:-3}
+      DISCOVERY_USER_AGENT: ${DISCOVERY_USER_AGENT:-TamilEventDiscoveryBot/1.0 (+https://github.com/karthi281104/Discovery_projects)}
+    depends_on:
+      db:
+        condition: service_healthy
+      api:
+        condition: service_started
 
   web:
     build: ./frontend
