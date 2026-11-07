@@ -60,18 +60,22 @@ class RSSConnector(BaseConnector):
             if isinstance(summary, dict):
                 summary = summary.get("value", "")
 
-            # Look for explicit event dates in tags/extensions
+            # Look for explicit event dates in tags/extensions used by common
+            # RSS event plugins and feeds.
             start_date_str = (
                 entry.get("ev_startdate")
                 or entry.get("start_date")
                 or entry.get("event_start")
                 or entry.get("startDate")
+                or entry.get("dtstart")
+                or entry.get("date")
             )
             end_date_str = (
                 entry.get("ev_enddate")
                 or entry.get("end_date")
                 or entry.get("event_end")
                 or entry.get("endDate")
+                or entry.get("dtend")
             )
 
             # If no explicit event date tag, attempt extraction from title or summary text
@@ -80,8 +84,12 @@ class RSSConnector(BaseConnector):
                 if extracted:
                     start_date_str = extracted
 
-            # Note: Article publication/update timestamp is intentionally NOT used as event date
-            # to prevent future events from being prematurely expired.
+            # Some event feeds expose only Atom's published timestamp. Keep this
+            # opt-out because it is the only usable date for those feeds, while
+            # allowing article/news feeds to disable the fallback explicitly.
+            source_config = source.request_config or {}
+            if not start_date_str and source_config.get("use_published_as_event_date", True):
+                start_date_str = entry.get("published") or entry.get("updated")
 
             organizer = entry.get("author") or entry.get("author_detail", {}).get("name")
             tags = [t.get("term", "") for t in entry.get("tags", []) if t.get("term")]

@@ -178,3 +178,39 @@ class EventSnapshot(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
 
     event_source: Mapped[EventSource] = relationship(back_populates="snapshots")
+
+
+class SearchCampaign(Base):
+    __tablename__ = "search_campaigns"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    region: Mapped[str] = mapped_column(String(120), index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(30), default="running", index=True)
+    queries_executed: Mapped[int] = mapped_column(default=0)
+    results_collected: Mapped[int] = mapped_column(default=0)
+    sources_discovered: Mapped[int] = mapped_column(default=0)
+    duration_ms: Mapped[int] = mapped_column(default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    results: Mapped[list["SearchResult"]] = relationship(
+        back_populates="campaign", cascade="all, delete-orphan"
+    )
+
+
+class SearchResult(Base):
+    __tablename__ = "search_results"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    campaign_id: Mapped[int] = mapped_column(
+        ForeignKey("search_campaigns.id", ondelete="CASCADE"), index=True
+    )
+    query: Mapped[str] = mapped_column(String(500), index=True)
+    url: Mapped[str] = mapped_column(String(1000), index=True)
+    title: Mapped[str] = mapped_column(String(500))
+    snippet: Mapped[str] = mapped_column(Text, default="")
+    relevance_score: Mapped[float] = mapped_column(Float, default=0.0)
+    discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    campaign: Mapped[SearchCampaign] = relationship(back_populates="results")

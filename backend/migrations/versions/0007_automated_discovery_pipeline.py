@@ -7,8 +7,8 @@ Create Date: 2026-11-06
 from alembic import op
 import sqlalchemy as sa
 
-revision = "0007_disc_pipeline"
-down_revision = "0006_location_verified_venue"
+revision = "0007_automated_discovery_pipeline"
+down_revision = "0006_alembic_version_length"
 branch_labels = None
 depends_on = None
 
@@ -96,3 +96,15 @@ def downgrade():
     for table_name in ("event_snapshots", "event_sources", "discovery_runs", "discovery_sources"):
         if table_name in existing_tables:
             op.drop_table(table_name)
+    conn = op.get_bind()
+    insp = sa.inspect(conn)
+    existing_tables = set(insp.get_table_names())
+
+    if "event_snapshots" in existing_tables:
+        op.drop_table("event_snapshots")
+    if "event_sources" in existing_tables:
+        op.drop_table("event_sources")
+    if "discovery_runs" in existing_tables:
+        op.drop_table("discovery_runs")
+    if "discovery_sources" in existing_tables:
+        op.drop_table("discovery_sources")

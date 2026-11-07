@@ -139,7 +139,7 @@ DISTRICT_LOCATIONS = [
 ]
 
 
-def seed_database(populate_sample_event: bool = True) -> None:
+def seed_database(populate_sample_event: bool = False) -> None:
     with Session(engine) as db:
         # 1. Admin user - only in non-production or if safe credentials provided
         is_prod = settings.app_env.lower() == "production"
@@ -333,5 +333,5 @@ def seed_database(populate_sample_event: bool = True) -> None:
 
 
 if __name__ == "__main__":
-    populate_dev_sample = "--no-sample" not in sys.argv
+    populate_dev_sample = "--sample" in sys.argv
     seed_database(populate_sample_event=populate_dev_sample)

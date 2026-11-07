@@ -7,6 +7,8 @@ from app.models.models import (
     EventSnapshot,
     EventSource,
     Location,
+    SearchCampaign,
+    SearchResult,
 )
 
 __all__ = [
@@ -18,4 +20,6 @@ __all__ = [
     "EventSnapshot",
     "EventSource",
     "Location",
+    "SearchCampaign",
+    "SearchResult",
 ]

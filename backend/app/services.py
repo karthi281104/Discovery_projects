@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 from typing import Any
 
 from fastapi import HTTPException, status
-from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models import AdminUser, Category, Event, Location
@@ -85,7 +85,6 @@ def list_events(
         )
 
     start_col = func.coalesce(Event.start_date, Event.starts_at)
-    end_col = func.coalesce(Event.end_date, Event.ends_at)
 
     if from_date:
         query = query.where(start_col >= from_date)
@@ -111,6 +110,30 @@ def list_events(
 
     order_target = start_col if "start_date" in sort else Event.created_at
     order_clause = desc(order_target) if sort.startswith("-") else order_target
+    ordered_query = query.order_by(
+        order_clause,
+        desc(Event.id) if sort.startswith("-") else Event.id,
+    )
+
+    if time in {"upcoming", "ongoing", "active", "past"}:
+        # Lifecycle classification includes date-only calendar-day handling and
+        # the documented default duration for events without an end date.
+        from app.discovery.lifecycle import classify_event_lifecycle
+
+        candidates = list(db.scalars(ordered_query).all())
+        lifecycle_matches = {
+            "upcoming": {"upcoming"},
+            "ongoing": {"ongoing"},
+            "active": {"upcoming", "ongoing"},
+            "past": {"past", "expired"},
+        }[time]
+        items = [
+            event for event in candidates
+            if classify_event_lifecycle(event) in lifecycle_matches
+        ]
+        total = len(items)
+        items = items[offset:offset + limit]
+        return items, total
 
     if time:
         from app.discovery.lifecycle import classify_event_lifecycle
@@ -130,7 +153,7 @@ def list_events(
         return items, total
 
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
-    items = list(db.scalars(query.order_by(order_clause).offset(offset).limit(limit)).all())
+    items = list(db.scalars(ordered_query.offset(offset).limit(limit)).all())
     return items, total
 
 

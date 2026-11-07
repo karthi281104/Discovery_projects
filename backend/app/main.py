@@ -31,7 +31,8 @@ async def lifespan(app: FastAPI):
                 command.upgrade(config, "head")
                 logger.info("Alembic migrations verified up-to-date (head).")
         except Exception as exc:
-            logger.warning("Auto-migration during development startup encountered: %s", exc)
+            logger.exception("Auto-migration during development startup failed.")
+            raise RuntimeError("Database migrations failed during application startup.") from exc
 
     try:
         from sqlalchemy.orm import Session

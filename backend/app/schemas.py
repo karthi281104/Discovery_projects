@@ -279,7 +279,7 @@ class AdminMetrics(BaseModel):
 # Milestone 3: Discovery Schemas
 # ==========================================
 
-SourceType = Literal["rss", "jsonld", "html", "api"]
+SourceType = Literal["rss", "jsonld", "html", "api", "auto"]
 
 
 class DiscoverySourceBase(BaseModel):

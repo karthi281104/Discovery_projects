@@ -97,7 +97,7 @@ export type AdminMetrics = {
 // Milestone 3: Discovery Types
 // ==========================================
 
-export type SourceType = 'rss' | 'jsonld' | 'html' | 'api'
+export type SourceType = 'rss' | 'jsonld' | 'html' | 'api' | 'auto'
 
 export type DiscoverySource = {
   id: number | string
@@ -156,6 +156,17 @@ export type DiscoveryMetrics = {
   total_events_updated: number
   total_duplicates_skipped: number
   total_validation_failures: number
+}
+
+export type SearchCampaign = {
+  id: number | string
+  status: string
+  region: string
+  queries_executed: number
+  results_collected: number
+  sources_discovered: number
+  duration_ms: number
+  error_message?: string | null
 }
 
 export type DiscoveryCandidate = {

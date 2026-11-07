@@ -53,7 +53,7 @@ tamil-event-discovery/
 │   │   ├── services.py              # Business logic, query filters, and status transitions
 │   │   ├── worker.py                # Standalone scheduled discovery worker process
 │   │   └── main.py                  # FastAPI application with lifespan management
-│   ├── migrations/                  # Alembic migration scripts (0001 -> 0007)
+│   ├── migrations/                  # Alembic migration scripts (0001 -> 0008)
 │   ├── seed.py                      # Idempotent seed catalogue & default discovery sources
 │   └── tests/                       # Comprehensive pytest suite (Unit, API, Ingestion, Migrations)
 ├── frontend/
@@ -82,6 +82,21 @@ tamil-event-discovery/
 The automated ingestion pipeline processes events in sequential, isolated phases:
 
 ```
+
+### Autonomous search and source expansion
+
+The worker can optionally run search campaigns against a configured, compliant
+SearXNG instance. Campaigns generate Tamil Nadu event queries, persist every
+query/result, score relevant URLs, register previously unknown pages as
+`auto` sources, and send those pages through the existing JSON-LD/HTML
+extraction and evidence-based auto-publishing pipeline. It is disabled by
+default and never bypasses robots rules, authentication, paywalls, or
+CAPTCHAs.
+
+Set `DISCOVERY_SEARCH_ENABLED=true` and `DISCOVERY_SEARCH_URL` to your own
+SearXNG endpoint, then run `python -m app.worker --once` to execute a campaign.
+The admin endpoints are `POST /api/v1/admin/discovery/search` and
+`GET /api/v1/admin/discovery/search/campaigns`.
 [Discovery Sources Registry]
              │
              ▼
@@ -147,7 +162,8 @@ $env:ADMIN_PASSWORD="adminpassword123"
 # Run Alembic migrations up to head (0007)
 alembic upgrade head
 
-# Seed initial categories, locations, admin user, and default sources
+# Seed categories, locations, admin user, and configured discovery sources.
+# No fabricated sample events are created by default.
 python seed.py
 
 # Start FastAPI server
@@ -162,6 +178,9 @@ python -m app.worker
 
 # Or execute a one-off run across due sources and exit:
 python -m app.worker --once
+
+# Optional development-only demo event (never use for real catalogue data):
+python seed.py --sample
 ```
 
 ### 3. Frontend Setup
@@ -216,7 +235,9 @@ alembic heads
 - `0004_complete_milestone2_schema`: Extended fields, indexes, category icon.
 - `0005_repair_category_icon`: Idempotent batch alteration for icon column.
 - `0006_location_verified_venue`: Venue verification flag on physical locations.
+- `0006_alembic_version_length`: Widens Alembic's version marker before the long automated-discovery revision.
 - `0007_automated_discovery_pipeline`: Source registry (`discovery_sources`), run history (`discovery_runs`), source provenance (`event_sources`), and raw audit snapshots (`event_snapshots`).
+- `0008_autonomous_search`: Persistent search campaigns and result evidence for autonomous source expansion.
 
 ---
 

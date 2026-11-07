@@ -17,7 +17,7 @@ from app.discovery.service import (
     run_all_enabled_sources,
     run_discovery_for_source,
 )
-from app.models import AdminUser, DiscoveryRun, DiscoverySource, EventSource
+from app.models import AdminUser, DiscoveryRun, DiscoverySource, EventSource, SearchCampaign
 from app.schemas import (
     DiscoveryCandidateRead,
     DiscoveryMetrics,
@@ -29,6 +29,7 @@ from app.schemas import (
     DiscoverySourceUpdate,
     EventSourceRead,
 )
+from app.discovery.search import run_search_campaign
 
 router = APIRouter(prefix="/discovery", tags=["admin-discovery"])
 
@@ -242,6 +243,54 @@ async def trigger_all_sources(
             metrics=r.metrics or {},
         )
         for r in runs
+    ]
+
+
+@router.post("/search", status_code=201)
+async def trigger_search_campaign(
+    db: Session = Depends(get_db),
+    _: AdminUser = Depends(auth),
+) -> dict[str, object]:
+    """Run a configured SearXNG campaign and persist discovered sources/results."""
+    try:
+        campaign = await run_search_campaign(db)
+    except RuntimeError as exc:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, str(exc)) from exc
+    return {
+        "id": campaign.id,
+        "status": campaign.status,
+        "region": campaign.region,
+        "queries_executed": campaign.queries_executed,
+        "results_collected": campaign.results_collected,
+        "sources_discovered": campaign.sources_discovered,
+        "duration_ms": campaign.duration_ms,
+        "error_message": campaign.error_message,
+    }
+
+
+@router.get("/search/campaigns")
+def list_search_campaigns(
+    limit: int = Query(default=20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    _: AdminUser = Depends(auth),
+) -> list[dict[str, object]]:
+    campaigns = db.scalars(
+        select(SearchCampaign).order_by(desc(SearchCampaign.started_at)).limit(limit)
+    ).all()
+    return [
+        {
+            "id": campaign.id,
+            "status": campaign.status,
+            "region": campaign.region,
+            "started_at": campaign.started_at,
+            "completed_at": campaign.completed_at,
+            "queries_executed": campaign.queries_executed,
+            "results_collected": campaign.results_collected,
+            "sources_discovered": campaign.sources_discovered,
+            "duration_ms": campaign.duration_ms,
+            "error_message": campaign.error_message,
+        }
+        for campaign in campaigns
     ]
 
 
