@@ -355,3 +355,100 @@ def compute_database_diagnostics(db: Session, as_of: Optional[datetime] = None) 
         "events_inconsistent_timezone": inconsistent_timezone,
     }
 
+
+def handle_duplicate_event_update(
+    db: Session,
+    existing_event: Event,
+    *,
+    new_source_url: str | None = None,
+    new_start_date: Optional[datetime] = None,
+    new_venue_name: Optional[str] = None,
+    new_registration_url: Optional[str] = None,
+    as_of: Optional[datetime] = None,
+) -> bool:
+    """
+    Handles event changes when a duplicate is detected:
+    1. Appends the new URL to additional_source_urls.
+    2. Compares fields: start_date, venue_name (event.venue), registration_url.
+    3. If any field changed, writes the field diff into update_history and updates the event record.
+    Returns True if fields were changed, False if unchanged.
+    """
+    if as_of is None:
+        as_of = datetime.now(timezone.utc)
+    elif as_of.tzinfo is None:
+        as_of = as_of.replace(tzinfo=timezone.utc)
+
+    # 1. Append the new URL to additional_source_urls
+    if new_source_url:
+        additional_urls = list(existing_event.additional_source_urls or [])
+        if new_source_url != existing_event.original_source_url and new_source_url not in additional_urls:
+            additional_urls.append(new_source_url)
+            existing_event.additional_source_urls = additional_urls
+
+    # 2. Compare fields: (start_date, venue_name, registration_url)
+    changes: dict[str, dict[str, Any]] = {}
+
+    if new_start_date is not None:
+        current_start = existing_event.start_date
+        if current_start is not None and current_start.tzinfo is None:
+            current_start = current_start.replace(tzinfo=timezone.utc)
+        target_start = new_start_date if new_start_date.tzinfo else new_start_date.replace(tzinfo=timezone.utc)
+
+        if current_start is None or current_start != target_start:
+            changes["start_date"] = {
+                "old": current_start.isoformat() if current_start else None,
+                "new": target_start.isoformat(),
+            }
+
+    if new_venue_name is not None and new_venue_name.strip():
+        current_venue = (existing_event.venue or "").strip()
+        target_venue = new_venue_name.strip()
+        if current_venue != target_venue:
+            changes["venue_name"] = {
+                "old": existing_event.venue,
+                "new": target_venue,
+            }
+
+    if new_registration_url is not None and new_registration_url.strip():
+        current_reg = (existing_event.registration_url or "").strip()
+        target_reg = new_registration_url.strip()
+        if current_reg != target_reg:
+            changes["registration_url"] = {
+                "old": existing_event.registration_url,
+                "new": target_reg,
+            }
+
+    # 3. If any field changed, write field diff into update_history and update event record
+    if changes:
+        history = list(existing_event.update_history or [])
+        for f_name, f_vals in changes.items():
+            diff_entry = {
+                "timestamp": as_of.isoformat(),
+                "source_url": new_source_url or existing_event.original_source_url,
+                "field": f_name,
+                "old_value": f_vals["old"],
+                "new_value": f_vals["new"],
+                "changes": changes,
+            }
+            history.append(diff_entry)
+        existing_event.update_history = history
+
+        # Update event record
+        if "start_date" in changes:
+            target_start = new_start_date if new_start_date.tzinfo else new_start_date.replace(tzinfo=timezone.utc)
+            existing_event.start_date = target_start
+            existing_event.starts_at = target_start
+
+        if "venue_name" in changes:
+            existing_event.venue = new_venue_name.strip()
+
+        if "registration_url" in changes:
+            existing_event.registration_url = new_registration_url.strip()
+            existing_event.ticket_url = new_registration_url.strip()
+
+        existing_event.updated_at = as_of
+        return True
+
+    return False
+
+

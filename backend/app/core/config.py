@@ -29,6 +29,8 @@ class Settings(BaseSettings):
     discovery_search_max_queries: int = 12
     discovery_search_results_per_query: int = 10
     discovery_search_languages: str = "en,ta"
+    searxng_url: str = "http://searxng:8080"
+    ollama_host: str = "http://ollama:11434"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

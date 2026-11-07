@@ -1,6 +1,8 @@
 from app.models.models import (
     AdminUser,
     Category,
+    DiscoveredUrl,
+    DiscoveredURL,
     DiscoveryRun,
     DiscoverySource,
     Event,
@@ -8,12 +10,15 @@ from app.models.models import (
     EventSource,
     Location,
     SearchCampaign,
+    SearchQueryExecution,
     SearchResult,
 )
 
 __all__ = [
     "AdminUser",
     "Category",
+    "DiscoveredUrl",
+    "DiscoveredURL",
     "DiscoveryRun",
     "DiscoverySource",
     "Event",
@@ -21,5 +26,6 @@ __all__ = [
     "EventSource",
     "Location",
     "SearchCampaign",
+    "SearchQueryExecution",
     "SearchResult",
 ]

@@ -35,6 +35,12 @@ export type Location = {
   is_verified_venue?: boolean
 }
 
+export type EventUpdateHistory = {
+  timestamp: string
+  source_url?: string
+  changes: Record<string, { old: any; new: any }>
+}
+
 export type Event = {
   id: number | string
   title: string
@@ -69,6 +75,16 @@ export type Event = {
   is_featured: boolean
   created_at?: string | null
   updated_at?: string | null
+  // Autonomous Discovery Tracking Fields
+  original_source_url?: string
+  additional_source_urls?: string[]
+  confidence_score?: number
+  validation_outcome?: string | null
+  content_hash?: string | null
+  update_history?: EventUpdateHistory[]
+  discovered_at?: string | null
+  extracted_at?: string | null
+  verified_at?: string | null
 }
 
 export type EventList = {
@@ -146,16 +162,33 @@ export type DiscoveryRunList = {
 }
 
 export type DiscoveryMetrics = {
-  total_sources: number
-  enabled_sources: number
-  sources_with_errors: number
+  // 14 Telemetry Counts
+  queries_executed: number
+  search_results_collected: number
+  new_urls_discovered: number
+  new_sources_identified: number
+  pages_successfully_fetched: number
+  pages_blocked_or_inaccessible: number
+  event_candidates_extracted: number
+  valid_events: number
+  events_published: number
+  candidates_requiring_review: number
+  duplicates_detected: number
+  events_updated: number
+  source_failures: number
+  discovery_execution_duration: number
+
+  // Legacy fields
+  total_sources?: number
+  enabled_sources?: number
+  sources_with_errors?: number
   last_successful_run?: string | null
-  total_pages_checked: number
-  total_candidates_found: number
-  total_events_created: number
-  total_events_updated: number
-  total_duplicates_skipped: number
-  total_validation_failures: number
+  total_pages_checked?: number
+  total_candidates_found?: number
+  total_events_created?: number
+  total_events_updated?: number
+  total_duplicates_skipped?: number
+  total_validation_failures?: number
 }
 
 export type SearchCampaign = {

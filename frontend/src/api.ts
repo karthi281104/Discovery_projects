@@ -164,5 +164,11 @@ export const getAdminSearchCampaigns = () =>
 export const getAdminDiscoveryCandidates = (limit = 50) =>
   adminRequest<DiscoveryCandidate[]>(`/admin/discovery/candidates?limit=${limit}`)
 
+export const getAdminReviewQueue = (limit = 50) =>
+  adminRequest<Event[]>(`/admin/discovery/review-queue?limit=${limit}`)
+
+export const getAdminPublishedEvents = (limit = 50) =>
+  adminRequest<Event[]>(`/admin/discovery/published-events?limit=${limit}`)
+
 export const getAdminEventSources = (eventId: string | number) =>
   adminRequest<EventSource[]>(`/admin/discovery/events/${eventId}/sources`)

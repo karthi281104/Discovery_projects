@@ -10,6 +10,21 @@ import type {
 } from '../types'
 
 const mockMetrics: DiscoveryMetrics = {
+  queries_executed: 10,
+  search_results_collected: 45,
+  new_urls_discovered: 25,
+  new_sources_identified: 2,
+  pages_successfully_fetched: 5,
+  pages_blocked_or_inaccessible: 1,
+  event_candidates_extracted: 12,
+  valid_events: 10,
+  events_published: 8,
+  candidates_requiring_review: 2,
+  duplicates_detected: 2,
+  events_updated: 2,
+  source_failures: 0,
+  discovery_execution_duration: 14.5,
+
   total_sources: 2,
   enabled_sources: 2,
   sources_with_errors: 0,
@@ -76,6 +91,8 @@ describe('DiscoveryMonitor Component', () => {
     vi.spyOn(api, 'getAdminDiscoverySources').mockResolvedValue({ items: mockSources, total: 1 })
     vi.spyOn(api, 'getAdminDiscoveryRuns').mockResolvedValue({ items: mockRuns, total: 1, page: 1, page_size: 20, pages: 1 })
     vi.spyOn(api, 'getAdminDiscoveryCandidates').mockResolvedValue(mockCandidates)
+    vi.spyOn(api, 'getAdminReviewQueue').mockResolvedValue([])
+    vi.spyOn(api, 'getAdminPublishedEvents').mockResolvedValue([])
   })
 
   it('renders discovery metrics, sources table, and recent runs', async () => {
@@ -85,8 +102,9 @@ describe('DiscoveryMonitor Component', () => {
       expect(screen.getAllByText('KnowAFest RSS Feed')[0]).toBeDefined()
     })
 
-    expect(screen.getByText('Active Sources')).toBeDefined()
-    expect(screen.getByText('Events Auto-Created')).toBeDefined()
+    expect(screen.getByText('Queries Executed')).toBeDefined()
+    expect(screen.getByText('Events Published')).toBeDefined()
+    expect(screen.getByText('Events Updated')).toBeDefined()
     expect(screen.getByText('Trigger All Sources')).toBeDefined()
     expect(screen.getByText('+ Add New Source')).toBeDefined()
     expect(screen.getByText('Recent Discovery Runs (1)')).toBeDefined()
@@ -144,8 +162,79 @@ describe('DiscoveryMonitor Component', () => {
     render(<DiscoveryMonitor />)
 
     await waitFor(() => {
+      expect(screen.getByText(/Exceptions/i)).toBeDefined()
+    })
+
+    fireEvent.click(screen.getByText(/Exceptions/i))
+
+    await waitFor(() => {
       expect(screen.getByText('Generic Event Title')).toBeDefined()
       expect(screen.getByText('Title is generic or boilerplate')).toBeDefined()
+    })
+  })
+
+  it('renders review queue and opens the evidence drawer with all fields and update history', async () => {
+    const mockReviewEvent = {
+      id: 201,
+      title: 'Salem AI Symposium 2026',
+      slug: 'salem-ai-symposium-2026',
+      description: 'Annual AI symposium in Salem',
+      organizer_name: 'Salem Tech',
+      event_type: 'symposium' as const,
+      mode: 'offline' as const,
+      start_date: '2026-11-25T09:00:00Z',
+      registration_url: 'https://example.com/register',
+      state: 'Tamil Nadu',
+      city: 'Salem',
+      venue: 'Salem Engineering College',
+      tags: ['ai', 'symposium'],
+      status: 'pending' as const,
+      is_published: false,
+      is_featured: false,
+      currency: 'INR',
+      confidence_score: 0.65,
+      validation_outcome: 'needs_review',
+      original_source_url: 'https://example.com/events/salem-ai-2026',
+      additional_source_urls: ['https://mirror.com/events/salem-ai'],
+      discovered_at: '2026-11-20T08:00:00Z',
+      extracted_at: '2026-11-20T08:05:00Z',
+      verified_at: null,
+      update_history: [
+        {
+          timestamp: '2026-11-20T09:30:00Z',
+          source_url: 'https://mirror.com/events/salem-ai',
+          changes: {
+            venue_name: {
+              old: 'Salem Tech Campus',
+              new: 'Salem Engineering College',
+            },
+          },
+        },
+      ],
+    }
+
+    vi.spyOn(api, 'getAdminReviewQueue').mockResolvedValue([mockReviewEvent])
+    render(<DiscoveryMonitor />)
+
+    await waitFor(() => {
+      expect(screen.getByText(/Review Queue/i)).toBeDefined()
+    })
+
+    fireEvent.click(screen.getByText(/Review Queue/i))
+
+    await waitFor(() => {
+      expect(screen.getByText('Salem AI Symposium 2026')).toBeDefined()
+      expect(screen.getByText(/Evidence Drawer/i)).toBeDefined()
+    })
+
+    // Click Evidence Drawer button
+    fireEvent.click(screen.getByText(/Evidence Drawer/i))
+
+    await waitFor(() => {
+      expect(screen.getByText(/Evidence Drawer: Salem AI Symposium 2026/i)).toBeDefined()
+      expect(screen.getByText('https://example.com/events/salem-ai-2026')).toBeDefined()
+      expect(screen.getByText('https://mirror.com/events/salem-ai')).toBeDefined()
+      expect(screen.getByText(/Salem Engineering College/i)).toBeDefined()
     })
   })
 })

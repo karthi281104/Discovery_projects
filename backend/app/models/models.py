@@ -1,6 +1,7 @@
+import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, JSON, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text, Uuid, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -82,9 +83,28 @@ class Event(Base):
     ticket_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
+    # Autonomous discovery tracking fields
+    original_source_url: Mapped[str] = mapped_column(Text, default="", server_default="")
+    additional_source_urls: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    confidence_score: Mapped[float] = mapped_column(Float, default=0.0, server_default="0.0")
+    validation_outcome: Mapped[str | None] = mapped_column(String(50), default="auto_published", server_default="auto_published", nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
+    update_history: Mapped[list] = mapped_column(JSON, default=list, server_default="[]")
+    discovered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    extracted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     category: Mapped[Category | None] = relationship(back_populates="events")
     location: Mapped[Location | None] = relationship(back_populates="events")
     sources: Mapped[list["EventSource"]] = relationship(back_populates="event", cascade="all, delete-orphan")
+
+    @property
+    def venue_name(self) -> str | None:
+        return self.venue
+
+    @venue_name.setter
+    def venue_name(self, value: str | None) -> None:
+        self.venue = value
 
 
 class AdminUser(Base):
@@ -117,11 +137,21 @@ class DiscoverySource(Base):
     last_success_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    extraction_method: Mapped[str | None] = mapped_column(String(40), default="html", server_default="html", nullable=True)
+    reliability_score: Mapped[float] = mapped_column(Float, default=1.0, server_default="1.0")
+    robots_allowed: Mapped[bool] = mapped_column(Boolean, default=True, server_default="1")
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 
     runs: Mapped[list["DiscoveryRun"]] = relationship(back_populates="source", cascade="all, delete-orphan")
     event_sources: Mapped[list["EventSource"]] = relationship(back_populates="source", cascade="all, delete-orphan")
+
+    def __init__(self, **kwargs):
+        if "name" not in kwargs or not kwargs["name"]:
+            base = kwargs.get("base_url", "source")
+            kwargs["name"] = f"Source ({base})"
+        super().__init__(**kwargs)
 
 
 class DiscoveryRun(Base):
@@ -214,3 +244,41 @@ class SearchResult(Base):
     discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     campaign: Mapped[SearchCampaign] = relationship(back_populates="results")
+
+
+# ==========================================
+# Milestone 4: Autonomous State Contracts
+# ==========================================
+
+class SearchQueryExecution(Base):
+    __tablename__ = "search_query_executions"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    query_text: Mapped[str] = mapped_column(String(500), index=True, nullable=False)
+    language: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    category: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    location_target: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    page_number: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    results_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    new_urls_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    yield_score: Mapped[float] = mapped_column(Float, default=0.0, server_default="0.0")
+    executed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class DiscoveredUrl(Base):
+    __tablename__ = "discovered_urls"
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    raw_url: Mapped[str] = mapped_column(Text, nullable=False)
+    canonical_url: Mapped[str] = mapped_column(Text, unique=True, index=True, nullable=False)
+    domain: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    classification: Mapped[str] = mapped_column(String(50), default="event_page", server_default="event_page")
+    fetch_status: Mapped[str] = mapped_column(String(30), default="pending", server_default="pending", index=True)
+    http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    discovered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+DiscoveredURL = DiscoveredUrl
+
+

@@ -1,6 +1,7 @@
 import asyncio
 import ipaddress
 import logging
+import re
 import socket
 import urllib.parse
 import urllib.robotparser
@@ -37,6 +38,13 @@ BLOCKED_NETWORKS = [
 
 DEFAULT_USER_AGENT = "TamilEventDiscoveryBot/1.0 (+https://github.com/karthi281104/Discovery_projects)"
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024  # 5 MB max response limit
+
+SPA_SKELETON_PATTERNS = [
+    re.compile(r'<div[^>]*id=["\']root["\'][^>]*>\s*</div>', re.IGNORECASE),
+    re.compile(r'<div[^>]*id=["\']app["\'][^>]*>\s*</div>', re.IGNORECASE),
+    re.compile(r'<div[^>]*id=["\']__next["\'][^>]*>\s*</div>', re.IGNORECASE),
+    re.compile(r'<div[^>]*id=["\']root["\'][^>]*>\s*<!--.*?-->\s*</div>', re.IGNORECASE | re.DOTALL),
+]
 
 
 class SSRFProtectionError(Exception):
@@ -120,6 +128,16 @@ def validate_url_safety(url: str) -> str:
     return url
 
 
+def is_spa_skeleton(html_text: str | None) -> bool:
+    """Detects if an HTML response contains an unrendered empty SPA skeleton."""
+    if not html_text:
+        return False
+    for pattern in SPA_SKELETON_PATTERNS:
+        if pattern.search(html_text):
+            return True
+    return False
+
+
 class SafeFetcher:
     """
     HTTP client enforcing:
@@ -128,6 +146,7 @@ class SafeFetcher:
     - Per-domain rate limiting
     - Connection and read timeouts
     - Real robots.txt parsing and adherence
+    - Dynamic client-side DOM rendering via Playwright for SPA skeletons
     - Custom User-Agent
     """
 
@@ -156,14 +175,12 @@ class SafeFetcher:
                 robots_url = f"{base}/robots.txt"
                 try:
                     validate_url_safety(robots_url)
-                    # Fetch robots.txt directly without recursion
                     resp = await self.fetch(robots_url, check_robots=False)
                     if resp.status_code == 200:
                         rp = urllib.robotparser.RobotFileParser()
                         rp.parse(resp.text.splitlines())
                         self._robots_cache[base] = rp
                     elif resp.status_code == 404:
-                        # 404 means no restrictions
                         rp = urllib.robotparser.RobotFileParser()
                         rp.parse([])
                         self._robots_cache[base] = rp
@@ -181,6 +198,34 @@ class SafeFetcher:
                 return True
         return True
 
+    async def render_with_playwright(self, url: str) -> str:
+        """
+        Renders dynamic client-side DOM using Playwright headless Chromium.
+        """
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            logger.warning("Playwright is not installed in the current environment; skipping dynamic rendering")
+            return ""
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            try:
+                page = await browser.new_page(user_agent=self.user_agent)
+                await page.goto(
+                    url,
+                    timeout=int(self.timeout.connect or 15.0) * 1000,
+                    wait_until="domcontentloaded",
+                )
+                try:
+                    await page.wait_for_load_state("networkidle", timeout=3000)
+                except Exception:
+                    pass
+                content = await page.content()
+                return content
+            finally:
+                await browser.close()
+
     async def fetch(
         self,
         url: str,
@@ -189,15 +234,16 @@ class SafeFetcher:
         max_redirects: int = 5,
         max_bytes: int = MAX_RESPONSE_BYTES,
         check_robots: bool = True,
+        render_spa: bool = True,
     ) -> httpx.Response:
         """
         Fetches a URL with SSRF validation at every hop, redirect re-validation,
-        robots.txt enforcement, and response size limits.
+        robots.txt enforcement, response size limits, and optional Playwright SPA rendering.
         """
         current_url = url
         redirect_count = 0
 
-        # Check robots.txt unless explicitly suppressed (e.g. when fetching robots.txt itself)
+        # Check robots.txt unless explicitly suppressed
         if check_robots:
             allowed = await self.is_allowed_by_robots(url)
             if not allowed:
@@ -248,4 +294,45 @@ class SafeFetcher:
                     )
 
                 response.raise_for_status()
+
+                # 5. Check for empty SPA skeleton and dynamically render DOM via Playwright
+                if render_spa and response.status_code == 200:
+                    content_type = response.headers.get("content-type", "").lower()
+                    if ("text/html" in content_type or "<html" in response.text[:200].lower()) and is_spa_skeleton(response.text):
+                        logger.info("Empty SPA skeleton detected for %s; rendering dynamic DOM with Playwright", current_url)
+                        try:
+                            rendered_html = await self.render_with_playwright(current_url)
+                            if rendered_html and not is_spa_skeleton(rendered_html):
+                                return httpx.Response(
+                                    status_code=response.status_code,
+                                    headers=response.headers,
+                                    text=rendered_html,
+                                    request=response.request,
+                                )
+                        except Exception as exc:
+                            logger.warning("Playwright rendering failed for %s: %s", current_url, exc)
+
                 return response
+
+
+async def fetch_url_content(url: str, **kwargs: Any) -> dict[str, Any]:
+    """
+    Fetches URL content safely using SafeFetcher and returns a structured dictionary:
+    {"html": str, "status": int, "headers": dict}
+    """
+    fetcher = SafeFetcher()
+    try:
+        response = await fetcher.fetch(url, **kwargs)
+        return {
+            "html": response.text,
+            "status": response.status_code,
+            "headers": dict(response.headers),
+        }
+    except Exception as exc:
+        return {
+            "html": "",
+            "status": 500,
+            "headers": {},
+            "error": str(exc),
+        }
+

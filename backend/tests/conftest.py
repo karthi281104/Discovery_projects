@@ -1,3 +1,5 @@
+import asyncio
+import inspect
 from datetime import datetime, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
@@ -48,6 +50,71 @@ def db():
         yield session
     finally:
         session.close()
+
+
+class AsyncSessionWrapper:
+    """Wraps synchronous Session to provide seamless compatibility with both async and sync test code."""
+
+    def __init__(self, session: Session):
+        self._session = session
+
+    def add(self, obj):
+        return self._session.add(obj)
+
+    def add_all(self, objs):
+        return self._session.add_all(objs)
+
+    async def commit(self):
+        return self._session.commit()
+
+    async def flush(self):
+        return self._session.flush()
+
+    async def execute(self, stmt):
+        return self._session.execute(stmt)
+
+    async def scalar(self, stmt):
+        return self._session.scalar(stmt)
+
+    async def scalars(self, stmt):
+        return self._session.scalars(stmt)
+
+    def delete(self, obj):
+        return self._session.delete(obj)
+
+    def refresh(self, obj):
+        return self._session.refresh(obj)
+
+    def __getattr__(self, name):
+        return getattr(self._session, name)
+
+
+@pytest.fixture
+def db_session(db):
+    """Provides an async-compatible db session fixture for test_critical_acceptance and other tests."""
+    return AsyncSessionWrapper(db)
+
+
+@pytest.fixture
+def test_client(client):
+    """Provides an alias fixture for client for test_critical_acceptance."""
+    return client
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_pyfunc_call(pyfuncitem):
+    """Executes async coroutine test functions within an event loop if not handled by a plugin."""
+    if inspect.iscoroutinefunction(pyfuncitem.obj):
+        loop = asyncio.new_event_loop()
+        try:
+            asyncio.set_event_loop(loop)
+            testargs = {arg: pyfuncitem.funcargs[arg] for arg in pyfuncitem._fixtureinfo.argnames}
+            loop.run_until_complete(pyfuncitem.obj(**testargs))
+            return True
+        finally:
+            loop.close()
+            asyncio.set_event_loop(None)
+
 
 
 @pytest.fixture

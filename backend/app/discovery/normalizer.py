@@ -3,7 +3,15 @@ import re
 from datetime import datetime, time, timezone
 from zoneinfo import ZoneInfo
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
-from bs4 import BeautifulSoup
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    class BeautifulSoup:  # type: ignore[no-redef]
+        def __init__(self, raw_html: str, parser: str = "html.parser"):
+            self.raw_html = raw_html or ""
+
+        def get_text(self) -> str:
+            return re.sub(r"<[^>]+>", " ", self.raw_html)
 from dateutil import parser as date_parser
 
 KOLKATA_TZ = ZoneInfo("Asia/Kolkata")

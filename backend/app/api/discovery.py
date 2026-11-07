@@ -17,7 +17,7 @@ from app.discovery.service import (
     run_all_enabled_sources,
     run_discovery_for_source,
 )
-from app.models import AdminUser, DiscoveryRun, DiscoverySource, EventSource, SearchCampaign
+from app.models import AdminUser, DiscoveryRun, DiscoverySource, Event, EventSource, SearchCampaign
 from app.schemas import (
     DiscoveryCandidateRead,
     DiscoveryMetrics,
@@ -27,6 +27,7 @@ from app.schemas import (
     DiscoverySourceList,
     DiscoverySourceRead,
     DiscoverySourceUpdate,
+    EventRead,
     EventSourceRead,
 )
 from app.discovery.search import run_search_campaign
@@ -412,6 +413,49 @@ def get_event_sources(
         )
         for s in sources
     ]
+
+
+@router.get("/review-queue", response_model=list[EventRead])
+def get_review_queue(
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    _: AdminUser = Depends(auth),
+):
+    """Retrieves discovered events awaiting manual review."""
+    events = db.scalars(
+        select(Event)
+        .where(
+            or_(
+                Event.validation_outcome == "needs_review",
+                Event.status == "pending",
+            )
+        )
+        .order_by(desc(Event.created_at))
+        .limit(limit)
+    ).all()
+    return events
+
+
+@router.get("/published-events", response_model=list[EventRead])
+def get_published_events(
+    limit: int = Query(default=50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    _: AdminUser = Depends(auth),
+):
+    """Retrieves discovered events that have been auto-published or published."""
+    events = db.scalars(
+        select(Event)
+        .where(
+            or_(
+                Event.validation_outcome == "auto_published",
+                Event.is_published.is_(True),
+                Event.status == "published",
+            )
+        )
+        .order_by(desc(Event.created_at))
+        .limit(limit)
+    ).all()
+    return events
 
 
 # ==========================================

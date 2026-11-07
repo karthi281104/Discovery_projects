@@ -17,6 +17,28 @@ services:
       timeout: 5s
       retries: 10
 
+  searxng:
+    image: searxng/searxng:latest
+    container_name: discovery_searxng
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./searxng:/etc/searxng:rw
+    environment:
+      - SEARXNG_BASE_URL=http://localhost:8080/
+      - UWSGI_WORKERS=4
+      - UWSGI_THREADS=4
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: discovery_ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
   api:
     build: ./backend
     container_name: tamil-event-discovery-api
@@ -34,6 +56,8 @@ services:
       DISCOVERY_MAX_PAGES_PER_SOURCE: ${DISCOVERY_MAX_PAGES_PER_SOURCE:-10}
       DISCOVERY_MAX_CONCURRENT_SOURCES: ${DISCOVERY_MAX_CONCURRENT_SOURCES:-3}
       DISCOVERY_USER_AGENT: ${DISCOVERY_USER_AGENT:-TamilEventDiscoveryBot/1.0 (+https://github.com/karthi281104/Discovery_projects)}
+      SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
     ports:
       - "8000:8000"
     depends_on:
@@ -55,6 +79,8 @@ services:
       DISCOVERY_MAX_PAGES_PER_SOURCE: ${DISCOVERY_MAX_PAGES_PER_SOURCE:-10}
       DISCOVERY_MAX_CONCURRENT_SOURCES: ${DISCOVERY_MAX_CONCURRENT_SOURCES:-3}
       DISCOVERY_USER_AGENT: ${DISCOVERY_USER_AGENT:-TamilEventDiscoveryBot/1.0 (+https://github.com/karthi281104/Discovery_projects)}
+      SEARXNG_URL: ${SEARXNG_URL:-http://searxng:8080}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://ollama:11434}
     depends_on:
       db:
         condition: service_healthy
@@ -74,3 +100,4 @@ services:
 
 volumes:
   postgres_data:
+  ollama_data:

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
@@ -8,12 +9,13 @@ from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.discovery.connectors.registry import get_connector
-from app.discovery.deduplicator import find_matching_event
+from app.discovery.deduplicator import compute_event_content_hash, find_matching_event
 from app.discovery.fetcher import SafeFetcher
 from app.discovery.lifecycle import (
     classify_event_lifecycle,
     expire_past_events,
     get_effective_end_date,
+    handle_duplicate_event_update,
 )
 from app.discovery.normalizer import (
     clean_text,
@@ -25,12 +27,15 @@ from app.discovery.normalizer import (
 from app.discovery.validator import validate_candidate
 from app.models import (
     Category,
+    DiscoveredUrl,
     DiscoveryRun,
     DiscoverySource,
     Event,
     EventSnapshot,
     EventSource,
     Location,
+    SearchCampaign,
+    SearchQueryExecution,
 )
 from app.schemas import DiscoveryMetrics
 from app.services import generate_unique_event_slug
@@ -211,6 +216,7 @@ async def run_discovery_for_source(
                 city=detected_city,
                 registration_deadline=deadline_dt,
                 as_of=now,
+                mode=mode,
             )
 
             if not val_result.is_valid:
@@ -251,6 +257,8 @@ async def run_discovery_for_source(
             }
             content_hash = compute_content_hash(normalized_payload)
 
+            event_content_hash = compute_event_content_hash(clean_title, start_dt, detected_city)
+
             if existing_event:
                 # Existing event: manage provenance and safe update
                 ev_source = db.scalar(
@@ -279,51 +287,55 @@ async def run_discovery_for_source(
                     ev_source.last_seen = now
                     ev_source.last_checked = now
 
-                # Change detection
-                if ev_source.content_hash != content_hash:
+                # Execute duplicate event update logic (Step 7)
+                field_updated = handle_duplicate_event_update(
+                    db,
+                    existing_event,
+                    new_source_url=canonical_source_url,
+                    new_start_date=start_dt,
+                    new_venue_name=venue,
+                    new_registration_url=canonical_reg_url,
+                    as_of=now,
+                )
+
+                # Controlled Reactivation: If event was expired and a reliable source updates
+                # start_date to a future date, reactivate event to published
+                if existing_event.status == "expired" and start_dt and start_dt > now and not val_result.is_cancelled:
+                    existing_event.status = "published"
+                    existing_event.is_published = True
+                    logger.info(
+                        "Reactivated previously expired event #%d '%s' with new future start_date %s",
+                        existing_event.id,
+                        existing_event.title,
+                        start_dt.isoformat(),
+                    )
+
+                if end_dt:
+                    existing_event.end_date = end_dt
+                    existing_event.ends_at = end_dt
+                if deadline_dt:
+                    existing_event.registration_deadline = deadline_dt
+                if clean_desc and len(clean_desc) > len(existing_event.description or ""):
+                    existing_event.description = clean_desc
+                if candidate.banner_url:
+                    existing_event.banner_url = candidate.banner_url
+                    existing_event.image_url = candidate.banner_url
+
+                # Handle cancellation announcement from reliable source
+                if val_result.is_cancelled:
+                    existing_event.status = "cancelled"
+                    existing_event.is_published = False
+                    logger.info("Marked event #%d '%s' as cancelled from source update", existing_event.id, existing_event.title)
+
+                # Change detection check on source content
+                source_content_changed = ev_source.content_hash != content_hash
+                if source_content_changed or field_updated:
                     ev_source.content_hash = content_hash
-
-                    # Safe update: never clear existing fields with empty source fields
-                    if clean_title and clean_title != existing_event.title:
-                        existing_event.title = clean_title
-                    if clean_desc and len(clean_desc) > len(existing_event.description or ""):
-                        existing_event.description = clean_desc
-
-                    if start_dt:
-                        existing_event.start_date = start_dt
-                        existing_event.starts_at = start_dt
-
-                        # Controlled Reactivation: If event was expired and a reliable source updates
-                        # start_date to a future date, reactivate event to published
-                        if existing_event.status == "expired" and start_dt > now and not val_result.is_cancelled:
-                            existing_event.status = "published"
-                            existing_event.is_published = True
-                            logger.info(
-                                "Reactivated previously expired event #%d '%s' with new future start_date %s",
-                                existing_event.id,
-                                existing_event.title,
-                                start_dt.isoformat(),
-                            )
-
-                    if end_dt:
-                        existing_event.end_date = end_dt
-                        existing_event.ends_at = end_dt
-                    if deadline_dt:
-                        existing_event.registration_deadline = deadline_dt
-                    if canonical_reg_url:
-                        existing_event.registration_url = canonical_reg_url
-                        existing_event.ticket_url = canonical_reg_url
-                    if venue:
-                        existing_event.venue = venue
-                    if candidate.banner_url:
-                        existing_event.banner_url = candidate.banner_url
-                        existing_event.image_url = candidate.banner_url
-
-                    # Handle cancellation announcement from reliable source
-                    if val_result.is_cancelled:
-                        existing_event.status = "cancelled"
-                        existing_event.is_published = False
-                        logger.info("Marked event #%d '%s' as cancelled from source update", existing_event.id, existing_event.title)
+                    existing_event.content_hash = event_content_hash
+                    existing_event.confidence_score = val_result.confidence_score
+                    existing_event.validation_outcome = val_result.validation_outcome
+                    if val_result.is_valid:
+                        existing_event.verified_at = now
 
                     # Add snapshot
                     snapshot = EventSnapshot(
@@ -380,6 +392,16 @@ async def run_discovery_for_source(
                     is_featured=False,
                     category_id=category_id,
                     location_id=location_id,
+                    # Autonomous state fields
+                    original_source_url=canonical_source_url,
+                    additional_source_urls=[],
+                    confidence_score=val_result.confidence_score,
+                    validation_outcome=val_result.validation_outcome,
+                    content_hash=event_content_hash,
+                    update_history=[],
+                    discovered_at=now,
+                    extracted_at=now,
+                    verified_at=now if val_result.is_valid else None,
                     # Legacy fields
                     starts_at=start_dt,
                     ends_at=end_dt,
@@ -497,38 +519,409 @@ async def run_all_enabled_sources(
 
 
 def get_discovery_metrics(db: Session) -> DiscoveryMetrics:
-    """Aggregates system-wide discovery metrics for the admin monitor."""
+    """Aggregates system-wide discovery metrics for the admin monitor across all 14 counters."""
+    # 1. queries_executed
+    query_execs = db.scalar(select(func.count(SearchQueryExecution.id))) or 0
+    campaign_queries = db.scalar(select(func.sum(SearchCampaign.queries_executed))) or 0
+    queries_executed = query_execs + campaign_queries
+
+    # 2. search_results_collected
+    query_results = db.scalar(select(func.sum(SearchQueryExecution.results_count))) or 0
+    campaign_results = db.scalar(select(func.sum(SearchCampaign.results_collected))) or 0
+    search_results_collected = query_results + campaign_results
+
+    # 3. new_urls_discovered
+    urls_count = db.scalar(select(func.count(DiscoveredUrl.id))) or 0
+    query_urls = db.scalar(select(func.sum(SearchQueryExecution.new_urls_count))) or 0
+    new_urls_discovered = max(urls_count, query_urls)
+
+    # 4. new_sources_identified
     total_sources = db.scalar(select(func.count(DiscoverySource.id))) or 0
-    enabled_sources = db.scalar(
-        select(func.count(DiscoverySource.id)).where(DiscoverySource.is_enabled.is_(True))
+    campaign_sources = db.scalar(select(func.sum(SearchCampaign.sources_discovered))) or 0
+    new_sources_identified = max(total_sources, campaign_sources)
+
+    # 5. pages_successfully_fetched
+    pages_fetched_urls = db.scalar(
+        select(func.count(DiscoveredUrl.id)).where(DiscoveredUrl.fetch_status == "fetched")
     ) or 0
+    run_pages_checked = db.scalar(select(func.sum(DiscoveryRun.pages_checked))) or 0
+    pages_successfully_fetched = pages_fetched_urls + run_pages_checked
+
+    # 6. pages_blocked_or_inaccessible
+    pages_blocked_or_inaccessible = db.scalar(
+        select(func.count(DiscoveredUrl.id)).where(DiscoveredUrl.fetch_status.in_(["blocked", "failed"]))
+    ) or 0
+
+    # 7. event_candidates_extracted
+    event_candidates_extracted = db.scalar(select(func.sum(DiscoveryRun.candidates_found))) or 0
+
+    # 8. valid_events
+    valid_events = db.scalar(
+        select(func.count(Event.id)).where(
+            or_(
+                Event.validation_outcome.in_(["auto_published", "needs_review"]),
+                Event.is_published.is_(True),
+                Event.status.in_(["published", "pending"]),
+            )
+        )
+    ) or 0
+
+    # 9. events_published
+    events_published = db.scalar(
+        select(func.count(Event.id)).where(
+            or_(
+                Event.is_published.is_(True),
+                Event.status == "published",
+                Event.validation_outcome == "auto_published",
+            )
+        )
+    ) or 0
+
+    # 10. candidates_requiring_review
+    candidates_requiring_review = db.scalar(
+        select(func.count(Event.id)).where(
+            or_(
+                Event.validation_outcome == "needs_review",
+                Event.status == "pending",
+                Event.status == "draft",
+            )
+        )
+    ) or 0
+
+    # 11. duplicates_detected
+    duplicates_detected = db.scalar(select(func.sum(DiscoveryRun.duplicates_skipped))) or 0
+
+    # 12. events_updated
+    events_updated = db.scalar(select(func.sum(DiscoveryRun.events_updated))) or 0
+
+    # 13. source_failures
     sources_with_errors = db.scalar(
         select(func.count(DiscoverySource.id)).where(DiscoverySource.last_error.isnot(None))
     ) or 0
+    failed_runs = db.scalar(
+        select(func.count(DiscoveryRun.id)).where(DiscoveryRun.status == "failed")
+    ) or 0
+    source_failures = sources_with_errors + failed_runs
 
+    # 14. discovery_execution_duration (seconds)
+    completed_runs = db.scalars(
+        select(DiscoveryRun).where(DiscoveryRun.completed_at.isnot(None))
+    ).all()
+    run_duration = sum(
+        (r.completed_at - r.started_at).total_seconds()
+        for r in completed_runs
+        if r.completed_at and r.started_at
+    )
+    campaign_duration_ms = db.scalar(select(func.sum(SearchCampaign.duration_ms))) or 0
+    discovery_execution_duration = round(run_duration + (campaign_duration_ms / 1000.0), 2)
+
+    # Legacy fields
+    enabled_sources = db.scalar(
+        select(func.count(DiscoverySource.id)).where(DiscoverySource.is_enabled.is_(True))
+    ) or 0
     last_success = db.scalar(
         select(DiscoveryRun.completed_at)
         .where(DiscoveryRun.status.in_(["success", "partial"]))
         .order_by(desc(DiscoveryRun.completed_at))
         .limit(1)
     )
-
-    pages = db.scalar(select(func.sum(DiscoveryRun.pages_checked))) or 0
-    candidates = db.scalar(select(func.sum(DiscoveryRun.candidates_found))) or 0
     created = db.scalar(select(func.sum(DiscoveryRun.events_created))) or 0
-    updated = db.scalar(select(func.sum(DiscoveryRun.events_updated))) or 0
-    skipped = db.scalar(select(func.sum(DiscoveryRun.duplicates_skipped))) or 0
     failures = db.scalar(select(func.sum(DiscoveryRun.validation_failures))) or 0
 
     return DiscoveryMetrics(
+        # The exact 14 telemetry counts:
+        queries_executed=queries_executed,
+        search_results_collected=search_results_collected,
+        new_urls_discovered=new_urls_discovered,
+        new_sources_identified=new_sources_identified,
+        pages_successfully_fetched=pages_successfully_fetched,
+        pages_blocked_or_inaccessible=pages_blocked_or_inaccessible,
+        event_candidates_extracted=event_candidates_extracted,
+        valid_events=valid_events,
+        events_published=events_published,
+        candidates_requiring_review=candidates_requiring_review,
+        duplicates_detected=duplicates_detected,
+        events_updated=events_updated,
+        source_failures=source_failures,
+        discovery_execution_duration=discovery_execution_duration,
+        # Legacy fields:
         total_sources=total_sources,
         enabled_sources=enabled_sources,
         sources_with_errors=sources_with_errors,
         last_successful_run=last_success,
-        total_pages_checked=pages,
-        total_candidates_found=candidates,
+        total_pages_checked=run_pages_checked,
+        total_candidates_found=event_candidates_extracted,
         total_events_created=created,
-        total_events_updated=updated,
-        total_duplicates_skipped=skipped,
+        total_events_updated=events_updated,
+        total_duplicates_skipped=duplicates_detected,
         total_validation_failures=failures,
     )
+
+
+class DiscoveryService:
+    """Service orchestrating autonomous search campaigns, candidate extraction, and lifecycle updates."""
+
+    def __init__(self, db: Any):
+        self.db = db
+
+    async def _db_execute(self, stmt):
+        result = self.db.execute(stmt)
+        if inspect.isawaitable(result):
+            return await result
+        return result
+
+    async def _db_scalar(self, stmt):
+        res = await self._db_execute(stmt)
+        if hasattr(res, "scalar"):
+            return res.scalar()
+        if hasattr(res, "scalars"):
+            return res.scalars().first()
+        return res
+
+    async def _db_commit(self):
+        result = self.db.commit()
+        if inspect.isawaitable(result):
+            await result
+
+    async def _db_flush(self):
+        result = self.db.flush()
+        if inspect.isawaitable(result):
+            await result
+
+    async def run_autonomous_campaign(
+        self,
+        region: str = "Tamil Nadu",
+        categories: list[str] | None = None,
+        languages: list[str] | None = None,
+    ) -> dict[str, Any]:
+        from app.discovery.fetcher import fetch_url_content
+        from app.discovery.search import AutonomousSearchEngine
+        from app.discovery.validator import extract_with_ollama
+
+        started_at = datetime.now(timezone.utc)
+        target_cats = categories or ["Hackathon", "Symposium"]
+        target_langs = languages or ["en", "ta"]
+
+        queries = [f"{cat} {region} 2026" for cat in target_cats]
+
+        queries_executed = 0
+        search_results_collected = 0
+        all_hits: list[dict[str, Any]] = []
+
+        for q in queries:
+            hits = await AutonomousSearchEngine.query_searxng(query=q)
+            queries_executed += 1
+            search_results_collected += len(hits)
+            all_hits.extend(hits)
+
+            exec_rec = SearchQueryExecution(
+                query_text=q,
+                language=target_langs[0] if target_langs else "en",
+                category=target_cats[0] if target_cats else "General",
+                location_target=region,
+                page_number=1,
+                results_count=len(hits),
+                new_urls_count=len(hits),
+                yield_score=1.0 if hits else 0.0,
+                executed_at=started_at,
+            )
+            self.db.add(exec_rec)
+
+        new_urls_discovered = 0
+        new_sources_identified = 0
+        pages_successfully_fetched = 0
+        pages_blocked_or_inaccessible = 0
+        event_candidates_extracted = 0
+        valid_events = 0
+        events_published = 0
+        candidates_requiring_review = 0
+        duplicates_detected = 0
+        events_updated = 0
+
+        # Process each search result
+        for hit in all_hits:
+            raw_url = hit.get("url")
+            if not raw_url:
+                continue
+
+            parsed = urllib.parse.urlparse(raw_url)
+            domain = parsed.netloc
+            domain_root = f"{parsed.scheme}://{domain}"
+            canonical = normalize_url(raw_url)
+
+            # 1. Discovered URL tracking
+            existing_disc = await self._db_scalar(
+                select(DiscoveredUrl).where(DiscoveredUrl.canonical_url == canonical)
+            )
+            if not existing_disc:
+                disc_url = DiscoveredUrl(
+                    raw_url=raw_url,
+                    canonical_url=canonical,
+                    domain=domain,
+                    fetch_status="pending",
+                    discovered_at=started_at,
+                )
+                self.db.add(disc_url)
+                await self._db_flush()
+                new_urls_discovered += 1
+            else:
+                disc_url = existing_disc
+
+            # 2. Source identification
+            existing_source = await self._db_scalar(
+                select(DiscoverySource).where(DiscoverySource.base_url.like(f"%{domain}%"))
+            )
+            if not existing_source:
+                new_source = DiscoverySource(
+                    name=f"Discovered Source ({domain})",
+                    base_url=domain_root,
+                    source_type="html",
+                    region=region,
+                    is_enabled=True,
+                    crawl_interval=60,
+                )
+                self.db.add(new_source)
+                await self._db_flush()
+                new_sources_identified += 1
+
+            # 3. Fetch URL content
+            page_data = await fetch_url_content(raw_url)
+            http_status = page_data.get("status", 200)
+            html_text = page_data.get("html", "")
+
+            if http_status == 200:
+                disc_url.fetch_status = "fetched"
+                disc_url.fetched_at = datetime.now(timezone.utc)
+                pages_successfully_fetched += 1
+            else:
+                disc_url.fetch_status = "failed"
+                pages_blocked_or_inaccessible += 1
+                continue
+
+            # 4. Extract candidate with Ollama
+            extraction = await extract_with_ollama(html_text)
+            if not extraction:
+                continue
+
+            is_event = extraction.get("is_event", True)
+            title = extraction.get("title")
+            if not is_event or not title:
+                continue
+
+            event_candidates_extracted += 1
+
+            start_str = extraction.get("start_date")
+            end_str = extraction.get("end_date")
+            venue_name = extraction.get("venue_name")
+            city = extraction.get("city") or "Chennai"
+            organizer = extraction.get("organizer") or "Organizer"
+            reg_url = extraction.get("registration_url") or raw_url
+            verbatim_quote = extraction.get("verbatim_evidence_quote") or title
+
+            start_dt = None
+            if start_str:
+                try:
+                    start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                except Exception:
+                    pass
+
+            if not start_dt:
+                start_dt = started_at + timedelta(days=14)
+
+            end_dt = None
+            if end_str:
+                try:
+                    end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
+                except Exception:
+                    pass
+
+            # 5. Deduplication check
+            matched_event = find_matching_event(
+                self.db,
+                title=title,
+                start_date=start_dt,
+                city=city,
+                canonical_url=canonical,
+                canonical_registration_url=reg_url,
+            )
+
+            now_ts = datetime.now(timezone.utc)
+
+            if matched_event:
+                # Event duplicate detected -> attempt update
+                field_changed = handle_duplicate_event_update(
+                    self.db,
+                    matched_event,
+                    new_source_url=raw_url,
+                    new_start_date=start_dt,
+                    new_venue_name=venue_name,
+                    new_registration_url=reg_url,
+                    as_of=now_ts,
+                )
+                if field_changed:
+                    events_updated += 1
+                else:
+                    duplicates_detected += 1
+            else:
+                # 6. New event creation and auto-publishing
+                confidence_score = 0.85
+                outcome = "auto_published"
+                initial_status = "published"
+                initial_published = True
+
+                valid_events += 1
+                events_published += 1
+
+                content_hash = compute_event_content_hash(title, start_dt, city)
+                slug = generate_unique_event_slug(self.db, title)
+
+                new_event = Event(
+                    title=title,
+                    slug=slug,
+                    description=verbatim_quote,
+                    short_description=title,
+                    organizer_name=organizer,
+                    registration_url=reg_url,
+                    official_website=canonical,
+                    start_date=start_dt,
+                    end_date=end_dt,
+                    venue=venue_name,
+                    city=city,
+                    state=region,
+                    event_type="hackathon" if "hack" in title.lower() else ("symposium" if "symposium" in title.lower() else "workshop"),
+                    mode="offline",
+                    status=initial_status,
+                    is_published=initial_published,
+                    original_source_url=raw_url,
+                    additional_source_urls=[],
+                    confidence_score=confidence_score,
+                    validation_outcome=outcome,
+                    content_hash=content_hash,
+                    discovered_at=now_ts,
+                    extracted_at=now_ts,
+                    verified_at=now_ts,
+                    update_history=[],
+                )
+                self.db.add(new_event)
+                await self._db_flush()
+
+        await self._db_commit()
+        duration = round((datetime.now(timezone.utc) - started_at).total_seconds(), 2)
+
+        return {
+            "queries_executed": queries_executed,
+            "search_results_collected": search_results_collected,
+            "new_urls_discovered": new_urls_discovered,
+            "new_sources_identified": new_sources_identified,
+            "pages_successfully_fetched": pages_successfully_fetched,
+            "pages_blocked_or_inaccessible": pages_blocked_or_inaccessible,
+            "event_candidates_extracted": event_candidates_extracted,
+            "valid_events": valid_events,
+            "events_published": events_published,
+            "candidates_requiring_review": candidates_requiring_review,
+            "duplicates_detected": duplicates_detected,
+            "events_updated": events_updated,
+            "source_failures": 0,
+            "discovery_execution_duration": duration,
+        }
+

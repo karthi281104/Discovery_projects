@@ -1,6 +1,6 @@
 import re
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
@@ -243,6 +243,17 @@ class EventRead(EventBase):
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
+    # Autonomous discovery tracking fields
+    original_source_url: str = ""
+    additional_source_urls: list[str] = Field(default_factory=list)
+    confidence_score: float = 0.0
+    validation_outcome: str | None = None
+    content_hash: str | None = None
+    update_history: list[dict[str, Any]] = Field(default_factory=list)
+    discovered_at: datetime | None = None
+    extracted_at: datetime | None = None
+    verified_at: datetime | None = None
+
 
 class EventList(BaseModel):
     items: list[EventRead]
@@ -391,13 +402,30 @@ class DiscoveryCandidateRead(BaseModel):
 
 
 class DiscoveryMetrics(BaseModel):
-    total_sources: int
-    enabled_sources: int
-    sources_with_errors: int
-    last_successful_run: datetime | None
-    total_pages_checked: int
-    total_candidates_found: int
-    total_events_created: int
-    total_events_updated: int
-    total_duplicates_skipped: int
-    total_validation_failures: int
+    # Exact 14 telemetry counts required by Step 8
+    queries_executed: int = 0
+    search_results_collected: int = 0
+    new_urls_discovered: int = 0
+    new_sources_identified: int = 0
+    pages_successfully_fetched: int = 0
+    pages_blocked_or_inaccessible: int = 0
+    event_candidates_extracted: int = 0
+    valid_events: int = 0
+    events_published: int = 0
+    candidates_requiring_review: int = 0
+    duplicates_detected: int = 0
+    events_updated: int = 0
+    source_failures: int = 0
+    discovery_execution_duration: float = 0.0
+
+    # Legacy fields maintained for backward compatibility
+    total_sources: int = 0
+    enabled_sources: int = 0
+    sources_with_errors: int = 0
+    last_successful_run: datetime | None = None
+    total_pages_checked: int = 0
+    total_candidates_found: int = 0
+    total_events_created: int = 0
+    total_events_updated: int = 0
+    total_duplicates_skipped: int = 0
+    total_validation_failures: int = 0

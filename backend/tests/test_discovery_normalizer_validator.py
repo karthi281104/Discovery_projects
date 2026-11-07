@@ -96,3 +96,52 @@ def test_validate_candidate_rejects_missing_date():
     )
     assert result.is_valid is False
     assert any("Start date is missing" in r for r in result.rejection_reasons)
+    assert result.validation_outcome == "rejected"
+
+
+def test_validation_decision_thresholds():
+    start_date = datetime(2026, 12, 1, 10, 0, tzinfo=timezone.utc)
+
+    # 1. auto_published (score >= 0.80)
+    res_high = validate_candidate(
+        title="Anna University AI Symposium 2026",
+        description="A comprehensive symposium featuring workshops, technical papers, and developer talks hosted at the campus." * 2,
+        start_date=start_date,
+        end_date=datetime(2026, 12, 2, 18, 0, tzinfo=timezone.utc),
+        registration_url="https://annauniv.edu/events/register",
+        organizer_name="Anna University College of Engineering",
+        venue="Guindy Campus",
+        city="Chennai",
+    )
+    assert res_high.validation_outcome == "auto_published"
+    assert res_high.confidence_score >= 0.80
+    assert res_high.is_valid is True
+
+    # 2. needs_review (0.45 <= score < 0.80)
+    # Missing accredited organizer and missing specific TN location
+    res_med = validate_candidate(
+        title="General Web Development Discussion",
+        description="Informal meetup discussing web frameworks and modern coding practices with participants.",
+        start_date=start_date,
+        registration_url="https://example.com/register",
+        organizer_name="Independent Group",
+        venue=None,
+        city=None,
+        mode="offline",
+    )
+    assert res_med.validation_outcome == "needs_review"
+    assert 0.45 <= res_med.confidence_score < 0.80
+    assert res_med.is_valid is False
+
+    # 3. rejected (< 0.45 or historical)
+    res_low = validate_candidate(
+        title="Old Event That Ended",
+        description="Short description",
+        start_date=datetime(2025, 1, 1, 10, 0, tzinfo=timezone.utc),
+        end_date=datetime(2025, 1, 2, 18, 0, tzinfo=timezone.utc),
+        registration_url="invalid_url",
+        as_of=datetime(2026, 1, 1, 0, 0, tzinfo=timezone.utc),
+    )
+    assert res_low.validation_outcome == "rejected"
+    assert res_low.is_valid is False
+

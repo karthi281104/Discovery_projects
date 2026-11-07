@@ -85,7 +85,8 @@ def test_sqlite_migrations_lifecycle_and_data_preservation(tmp_path):
         tables = set(inspector.get_table_names())
         assert {
             "categories", "locations", "events", "admin_users", "alembic_version",
-            "discovery_sources", "discovery_runs", "event_sources", "event_snapshots"
+            "discovery_sources", "discovery_runs", "event_sources", "event_snapshots",
+            "search_query_executions", "discovered_urls",
         } <= tables
 
         loc_cols = {c["name"] for c in inspector.get_columns("locations")}
@@ -136,7 +137,8 @@ def test_postgres_fresh_installation_upgrade_downgrade():
         tables = set(inspector.get_table_names())
         assert {
             "categories", "locations", "events", "admin_users", "alembic_version",
-            "discovery_sources", "discovery_runs", "event_sources", "event_snapshots"
+            "discovery_sources", "discovery_runs", "event_sources", "event_snapshots",
+            "search_query_executions", "discovered_urls",
         } <= tables
 
         cat_cols = {c["name"] for c in inspector.get_columns("categories")}
