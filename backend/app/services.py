@@ -98,6 +98,9 @@ def list_events(
     if mode:
         query = query.where(Event.mode == mode)
 
+    # Lifecycle is evaluated in Python using the same policy as the worker.
+    # This avoids SQL approximations that misclassify date-only and missing-end events.
+
     if featured is not None:
         query = query.where(Event.is_featured.is_(featured))
 
@@ -130,6 +133,23 @@ def list_events(
         ]
         total = len(items)
         items = items[offset:offset + limit]
+        return items, total
+
+    if time:
+        from app.discovery.lifecycle import classify_event_lifecycle
+        all_matching = list(db.scalars(query.order_by(order_clause)).all())
+        if time == "active":
+            allowed = {"upcoming", "ongoing"}
+        elif time == "past":
+            allowed = {"past", "expired"}
+        else:
+            allowed = {time}
+        filtered = [
+            event for event in all_matching
+            if classify_event_lifecycle(event) in allowed
+        ]
+        total = len(filtered)
+        items = filtered[offset:offset + limit]
         return items, total
 
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0

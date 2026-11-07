@@ -167,3 +167,50 @@ def test_expire_past_events(db_session):
     db_session.refresh(past_event)
     assert past_event.status == "expired"
     assert past_event.is_published is False
+
+
+def test_active_listing_uses_shared_lifecycle_for_end_dates(db_session):
+    now = datetime.now(timezone.utc)
+    future = Event(
+        title="Future Lifecycle Listing Test",
+        slug=f"future-life-{int(now.timestamp())}",
+        description="A future opportunity that should remain visible.",
+        start_date=now + timedelta(days=3),
+        end_date=None,
+        organizer_name="Test Organizer",
+        registration_url="https://example.com/future",
+        status="published",
+        is_published=True,
+    )
+    ongoing = Event(
+        title="Ongoing Lifecycle Listing Test",
+        slug=f"ongoing-life-{int(now.timestamp())}",
+        description="An ongoing opportunity with no explicit end date.",
+        start_date=now - timedelta(hours=1),
+        end_date=None,
+        organizer_name="Test Organizer",
+        registration_url="https://example.com/ongoing",
+        status="published",
+        is_published=True,
+    )
+    date_only = Event(
+        title="Date Only Lifecycle Listing Test",
+        slug=f"date-only-life-{int(now.timestamp())}",
+        description="A date-only event must remain active through its local day.",
+        start_date=now.replace(hour=0, minute=0, second=0, microsecond=0),
+        end_date=None,
+        organizer_name="Test Organizer",
+        registration_url="https://example.com/date-only",
+        status="published",
+        is_published=True,
+        tags=["date_only"],
+    )
+    db_session.add_all([future, ongoing, date_only])
+    db_session.commit()
+
+    active, total = list_events(db_session, time="active", published_only=True)
+    active_ids = {event.id for event in active}
+    assert future.id in active_ids
+    assert ongoing.id in active_ids
+    assert date_only.id in active_ids
+    assert total == len(active)

@@ -345,7 +345,7 @@ async def run_discovery_for_source(
                 unique_slug = generate_unique_event_slug(db, clean_title)
 
                 tags = candidate.tags or [event_type]
-                if is_start_date_only and "date_only" not in tags:
+                if (is_start_date_only or is_end_date_only) and "date_only" not in tags:
                     tags.append("date_only")
 
                 initial_status = "cancelled" if val_result.is_cancelled else "published"
