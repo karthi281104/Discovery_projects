@@ -73,10 +73,10 @@ class AsyncSessionWrapper:
     async def execute(self, stmt):
         return self._session.execute(stmt)
 
-    async def scalar(self, stmt):
+    def scalar(self, stmt):
         return self._session.scalar(stmt)
 
-    async def scalars(self, stmt):
+    def scalars(self, stmt):
         return self._session.scalars(stmt)
 
     def delete(self, obj):

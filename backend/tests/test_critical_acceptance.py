@@ -104,30 +104,45 @@ async def test_critical_acceptance_10_step_autonomous_cycle(db_session, test_cli
 
         mock_fetch.side_effect = fetch_side_effect
 
-        mock_ollama.side_effect = [
-            {
-                "is_event": True,
-                "title": "National Technical Symposium 2026",
-                "start_date": "2026-12-12T09:00:00",
-                "end_date": "2026-12-12T17:00:00",
-                "venue_name": "Department of ECE, Chennai Campus",
-                "city": "Chennai",
-                "organizer": "Unregistered TN College",
-                "registration_url": "https://unregistered-tn-college.edu.in/register",
-                "verbatim_evidence_quote": "Organized by the Department of ECE at Chennai Campus. Date: December 12, 2026",
-            },
-            {
-                "is_event": True,
-                "title": "Tamil Nadu AI Hackathon 2026",
-                "start_date": "2026-12-20T10:00:00",
-                "end_date": "2026-12-21T18:00:00",
-                "venue_name": "Guindy Tech Park",
-                "city": "Chennai",
-                "organizer": "Chennai Tech Hub",
-                "registration_url": "https://chennai-tech-hub.org/join",
-                "verbatim_evidence_quote": "Grand coding marathon across colleges in Tamil Nadu. Date: December 20, 2026",
-            },
-        ]
+        # Dynamic mock function that matches content instead of exhausting an iterator
+        async def ollama_side_effect(text, *args, **kwargs):
+            if "National Technical Symposium" in text:
+                return {
+                    "is_event": True,
+                    "title": "National Technical Symposium 2026",
+                    "start_date": "2026-12-12T09:00:00",
+                    "end_date": "2026-12-12T17:00:00",
+                    "venue_name": "Department of ECE, Chennai Campus",
+                    "city": "Chennai",
+                    "organizer": "Unregistered TN College",
+                    "registration_url": "https://unregistered-tn-college.edu.in/register",
+                    "verbatim_evidence_quote": "Organized by the Department of ECE at Chennai Campus. Date: December 12, 2026",
+                }
+            elif "Tamil Nadu AI Hackathon" in text:
+                return {
+                    "is_event": True,
+                    "title": "Tamil Nadu AI Hackathon 2026",
+                    "start_date": "2026-12-20T10:00:00",
+                    "end_date": "2026-12-21T18:00:00",
+                    "venue_name": "Guindy Tech Park",
+                    "city": "Chennai",
+                    "organizer": "Chennai Tech Hub",
+                    "registration_url": "https://chennai-tech-hub.org/join",
+                    "verbatim_evidence_quote": "Grand coding marathon across colleges in Tamil Nadu. Date: December 20, 2026",
+                }
+            return {
+                "is_event": False,
+                "title": None,
+                "start_date": None,
+                "end_date": None,
+                "venue_name": None,
+                "city": None,
+                "organizer": None,
+                "registration_url": None,
+                "verbatim_evidence_quote": None,
+            }
+
+        mock_ollama.side_effect = ollama_side_effect
 
         # Execute Run 1: Autonomous Search Campaign
         service = DiscoveryService(db_session)
@@ -226,44 +241,56 @@ async def test_critical_acceptance_10_step_autonomous_cycle(db_session, test_cli
 
         mock_fetch_2.side_effect = fetch_side_effect_2
 
-        mock_ollama_2.side_effect = [
-            # Updated Symposium:
-            {
-                "is_event": True,
-                "title": "National Technical Symposium 2026",
-                "start_date": "2026-12-12T09:00:00",
-                "end_date": "2026-12-12T17:00:00",
-                "venue_name": "Main Auditorium Hall A",
-                "city": "Chennai",
-                "organizer": "Unregistered TN College",
-                "registration_url": "https://unregistered-tn-college.edu.in/register",
-                "verbatim_evidence_quote": "Venue: Main Auditorium Hall A. Date: December 12, 2026",
-            },
-            # Cross-Source Duplicate Hackathon:
-            {
-                "is_event": True,
-                "title": "Tamil Nadu AI Hackathon 2026",
-                "start_date": "2026-12-20T10:00:00",
-                "end_date": "2026-12-21T18:00:00",
-                "venue_name": "Guindy Tech Park",
-                "city": "Chennai",
-                "organizer": "Chennai Tech Hub",
-                "registration_url": "https://chennai-tech-hub.org/join",
-                "verbatim_evidence_quote": "Mirrored listing. Date: December 20, 2026",
-            },
-            # Brand-New Event:
-            {
-                "is_event": True,
-                "title": "State-Level IoT & Edge AI Workshop 2026",
-                "start_date": "2026-12-28T09:30:00",
-                "end_date": "2026-12-28T16:30:00",
-                "venue_name": "Seminar Hall 2",
-                "city": "Chennai",
-                "organizer": "Unregistered TN College",
-                "registration_url": "https://unregistered-tn-college.edu.in/workshop-iot",
-                "verbatim_evidence_quote": "Hands-on workshop on December 28, 2026 at Seminar Hall 2, Chennai",
-            },
-        ]
+        async def ollama_side_effect_2(text, *args, **kwargs):
+            if "National Technical Symposium" in text:
+                return {
+                    "is_event": True,
+                    "title": "National Technical Symposium 2026",
+                    "start_date": "2026-12-12T09:00:00",
+                    "end_date": "2026-12-12T17:00:00",
+                    "venue_name": "Main Auditorium Hall A",
+                    "city": "Chennai",
+                    "organizer": "Unregistered TN College",
+                    "registration_url": "https://unregistered-tn-college.edu.in/register",
+                    "verbatim_evidence_quote": "Venue: Main Auditorium Hall A. Date: December 12, 2026",
+                }
+            elif "Tamil Nadu AI Hackathon" in text:
+                return {
+                    "is_event": True,
+                    "title": "Tamil Nadu AI Hackathon 2026",
+                    "start_date": "2026-12-20T10:00:00",
+                    "end_date": "2026-12-21T18:00:00",
+                    "venue_name": "Guindy Tech Park",
+                    "city": "Chennai",
+                    "organizer": "Chennai Tech Hub",
+                    "registration_url": "https://chennai-tech-hub.org/join",
+                    "verbatim_evidence_quote": "Mirrored listing. Date: December 20, 2026",
+                }
+            elif "IoT & Edge AI Workshop" in text:
+                return {
+                    "is_event": True,
+                    "title": "State-Level IoT & Edge AI Workshop 2026",
+                    "start_date": "2026-12-28T09:30:00",
+                    "end_date": "2026-12-28T16:30:00",
+                    "venue_name": "Seminar Hall 2",
+                    "city": "Chennai",
+                    "organizer": "Unregistered TN College",
+                    "registration_url": "https://unregistered-tn-college.edu.in/workshop-iot",
+                    "verbatim_evidence_quote": "Hands-on workshop on December 28, 2026 at Seminar Hall 2, Chennai",
+                }
+            return {
+                "is_event": False,
+                "title": None,
+                "start_date": None,
+                "end_date": None,
+                "venue_name": None,
+                "city": None,
+                "organizer": None,
+                "registration_url": None,
+                "verbatim_evidence_quote": None,
+            }
+
+        mock_ollama_2.side_effect = ollama_side_effect_2
 
         run_2_metrics = await service.run_autonomous_campaign(
             region="Tamil Nadu",

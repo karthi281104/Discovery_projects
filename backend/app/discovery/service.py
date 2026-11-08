@@ -1,4 +1,5 @@
 import hashlib
+import inspect
 import json
 import logging
 import urllib.parse
@@ -664,6 +665,14 @@ class DiscoveryService:
     def __init__(self, db: Any):
         self.db = db
 
+    @property
+    def sync_db(self):
+        if hasattr(self.db, "_session"):
+            return self.db._session
+        if hasattr(self.db, "sync_session"):
+            return self.db.sync_session
+        return self.db
+
     async def _db_execute(self, stmt):
         result = self.db.execute(stmt)
         if inspect.isawaitable(result):
@@ -671,11 +680,22 @@ class DiscoveryService:
         return result
 
     async def _db_scalar(self, stmt):
+        if hasattr(self.db, "scalar"):
+            res = self.db.scalar(stmt)
+            if inspect.isawaitable(res):
+                return await res
+            return res
         res = await self._db_execute(stmt)
         if hasattr(res, "scalar"):
-            return res.scalar()
+            val = res.scalar()
+            if inspect.isawaitable(val):
+                return await val
+            return val
         if hasattr(res, "scalars"):
-            return res.scalars().first()
+            scalars = res.scalars()
+            if inspect.isawaitable(scalars):
+                scalars = await scalars
+            return scalars.first()
         return res
 
     async def _db_commit(self):
@@ -738,8 +758,20 @@ class DiscoveryService:
         duplicates_detected = 0
         events_updated = 0
 
-        # Process each search result
+        # Deduplicate hits by normalized canonical URL within this campaign run
+        unique_hits: list[dict[str, Any]] = []
+        seen_campaign_urls: set[str] = set()
         for hit in all_hits:
+            raw_url = hit.get("url")
+            if not raw_url:
+                continue
+            canonical = normalize_url(raw_url)
+            if canonical not in seen_campaign_urls:
+                seen_campaign_urls.add(canonical)
+                unique_hits.append(hit)
+
+        # Process each unique search result
+        for hit in unique_hits:
             raw_url = hit.get("url")
             if not raw_url:
                 continue
@@ -837,7 +869,7 @@ class DiscoveryService:
 
             # 5. Deduplication check
             matched_event = find_matching_event(
-                self.db,
+                self.sync_db,
                 title=title,
                 start_date=start_dt,
                 city=city,
@@ -850,7 +882,7 @@ class DiscoveryService:
             if matched_event:
                 # Event duplicate detected -> attempt update
                 field_changed = handle_duplicate_event_update(
-                    self.db,
+                    self.sync_db,
                     matched_event,
                     new_source_url=raw_url,
                     new_start_date=start_dt,
@@ -873,7 +905,7 @@ class DiscoveryService:
                 events_published += 1
 
                 content_hash = compute_event_content_hash(title, start_dt, city)
-                slug = generate_unique_event_slug(self.db, title)
+                slug = generate_unique_event_slug(self.sync_db, title)
 
                 new_event = Event(
                     title=title,
