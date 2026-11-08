@@ -1,3 +1,6 @@
+import os
+os.environ["APP_ENV"] = "testing"
+
 import asyncio
 import inspect
 from datetime import datetime, timedelta, timezone
@@ -8,6 +11,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.core.config import settings
+settings.app_env = "testing"
 from app.core.security import create_access_token, hash_password
 from app.db.base import Base
 from app.db.dependencies import get_db
@@ -99,21 +103,6 @@ def db_session(db):
 def test_client(client):
     """Provides an alias fixture for client for test_critical_acceptance."""
     return client
-
-
-@pytest.hookimpl(tryfirst=True)
-def pytest_pyfunc_call(pyfuncitem):
-    """Executes async coroutine test functions within an event loop if not handled by a plugin."""
-    if inspect.iscoroutinefunction(pyfuncitem.obj):
-        loop = asyncio.new_event_loop()
-        try:
-            asyncio.set_event_loop(loop)
-            testargs = {arg: pyfuncitem.funcargs[arg] for arg in pyfuncitem._fixtureinfo.argnames}
-            loop.run_until_complete(pyfuncitem.obj(**testargs))
-            return True
-        finally:
-            loop.close()
-            asyncio.set_event_loop(None)
 
 
 

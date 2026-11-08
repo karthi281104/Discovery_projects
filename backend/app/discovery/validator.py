@@ -30,6 +30,27 @@ ACCREDITED_INSTITUTION_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+ONLINE_KEYWORDS = ["online", "virtual", "webinar", "zoom", "teams", "fdp", "hands-on workshop"]
+TN_CITIES = [
+    "chennai", "coimbatore", "madurai", "trichy", "tiruchirappalli",
+    "salem", "tirunelveli", "vellore", "erode", "thanjavur", "tamil nadu",
+]
+
+
+def verify_location(candidate: dict) -> tuple[bool, str]:
+    text_corpus = f"{candidate.get('title', '')} {candidate.get('venue_name', '')} {candidate.get('venue', '')} {candidate.get('city', '')}".lower()
+
+    # 1. Direct Tamil Nadu District / City Check
+    if any(city in text_corpus for city in TN_CITIES) or any(d.lower() in text_corpus for d in TAMIL_NADU_DISTRICTS) or any(a in text_corpus for a in DISTRICT_ALIASES):
+        return True, "tamil_nadu_verified"
+
+    # 2. Virtual / Online Event Check
+    if any(kw in text_corpus for kw in ONLINE_KEYWORDS) or candidate.get("mode") in ("online", "hybrid"):
+        return True, "online_virtual"
+
+    return False, "unverified"
+
+
 
 class OllamaEventExtraction(BaseModel):
     title: Optional[str] = Field(default=None, description="Event title verbatim from source")
@@ -59,13 +80,19 @@ async def extract_with_ollama(
     *,
     model: str = "qwen2.5:7b-instruct",
     ollama_host: Optional[str] = None,
-    timeout: float = 20.0,
+    timeout: float = 60.0,
 ) -> Optional[OllamaEventExtraction]:
     """
     Passes Trafilatura text to Ollama using Pydantic JSON schema format.
     Enforces zero hallucination: returns null if a detail is not explicitly in text.
     """
-    host = ollama_host or getattr(settings, "ollama_host", "http://ollama:11434")
+    host = ollama_host or getattr(settings, "ollama_host", "http://localhost:11434")
+    hosts_to_try = [host]
+    if "ollama:11434" in host:
+        hosts_to_try.append("http://localhost:11434")
+    elif "localhost:11434" in host:
+        hosts_to_try.append("http://ollama:11434")
+
     prompt = (
         "Extract the following event details from the text strictly into the requested JSON schema.\n"
         "ENFORCE ZERO HALLUCINATION: If a detail (like venue, dates, or registration url) is not explicitly "
@@ -74,40 +101,44 @@ async def extract_with_ollama(
         f"TEXT:\n{text_content[:4000]}"
     )
 
-    try:
-        # Check if ollama client package is available
-        import ollama
-        client = ollama.AsyncClient(host=host)
-        resp = await client.chat(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            format=OllamaEventExtraction.model_json_schema(),
-            options={"temperature": 0.0},
-        )
-        content = resp["message"]["content"]
-        return OllamaEventExtraction.model_validate_json(content)
-    except Exception as exc:
-        logger.debug("Ollama async client invocation unavailable (%s); attempting HTTP REST call", exc)
+    for current_host in hosts_to_try:
+        try:
+            # Check if ollama client package is available
+            import ollama
+            client = ollama.AsyncClient(host=current_host)
+            resp = await client.chat(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                format=OllamaEventExtraction.model_json_schema(),
+                options={"temperature": 0.0},
+            )
+            content = resp["message"]["content"]
+            return OllamaEventExtraction.model_validate_json(content)
+        except Exception as exc:
+            logger.debug("Ollama async client invocation unavailable on %s (%s); attempting HTTP REST call", current_host, exc)
 
-    # HTTP Fallback
-    try:
-        endpoint = f"{host.rstrip('/')}/api/chat"
-        payload = {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "format": OllamaEventExtraction.model_json_schema(),
-            "stream": False,
-            "options": {"temperature": 0.0},
-        }
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(endpoint, json=payload)
-            resp.raise_for_status()
-            data = resp.json()
-            raw_content = data.get("message", {}).get("content", "{}")
-            return OllamaEventExtraction.model_validate_json(raw_content)
-    except Exception as exc:
-        logger.warning("Structured Ollama extraction failed (%s): %s", host, exc)
-        return None
+        # HTTP Fallback
+        try:
+            endpoint = f"{current_host.rstrip('/')}/api/chat"
+            payload = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                "format": OllamaEventExtraction.model_json_schema(),
+                "stream": False,
+                "options": {"temperature": 0.0},
+            }
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(endpoint, json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                raw_content = data.get("message", {}).get("content", "{}")
+                return OllamaEventExtraction.model_validate_json(raw_content)
+        except Exception as exc:
+            logger.debug("Structured Ollama HTTP extraction failed on %s: %s", current_host, exc)
+            continue
+
+    logger.warning("Structured Ollama extraction failed on all configured hosts")
+    return None
 
 
 def _parse_date_flexible(date_str: str | None) -> Optional[datetime]:
@@ -226,22 +257,28 @@ def validate_candidate(
                 evidence["date_in_quote"] = True
 
     # 4. Location Verification (+0.25)
-    location_verified = False
-    if mode in ("online", "hybrid"):
-        location_verified = True
-        evidence["location_type"] = f"verified_{mode}"
-    else:
-        combined_loc = f"{venue or ''} {city or ''}".lower()
-        if any(d.lower() in combined_loc for d in TAMIL_NADU_DISTRICTS) or any(a in combined_loc for a in DISTRICT_ALIASES):
+    candidate_dict = {
+        "title": clean_title,
+        "venue_name": venue or "",
+        "venue": venue or "",
+        "city": city or "",
+        "mode": mode,
+        "description": description or "",
+    }
+    location_verified, loc_type = verify_location(candidate_dict)
+    if not location_verified and verbatim_evidence_quote:
+        quote_lower = verbatim_evidence_quote.lower()
+        if any(c in quote_lower for c in TN_CITIES) or any(d.lower() in quote_lower for d in TAMIL_NADU_DISTRICTS) or any(a in quote_lower for a in DISTRICT_ALIASES):
             location_verified = True
-            evidence["location_type"] = "tamil_nadu_verified"
-        elif "tamil nadu" in combined_loc:
+            loc_type = "tamil_nadu_verified"
+        elif any(kw in quote_lower for kw in ONLINE_KEYWORDS):
             location_verified = True
-            evidence["location_type"] = "state_verified"
+            loc_type = "online_virtual"
 
     if location_verified:
         score += 0.25
         evidence["location_verified"] = True
+        evidence["location_type"] = loc_type
     else:
         evidence["location_verified"] = False
 

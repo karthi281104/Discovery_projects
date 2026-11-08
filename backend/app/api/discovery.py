@@ -1,6 +1,6 @@
 from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.core.security import get_current_admin
@@ -11,6 +11,7 @@ from app.discovery.lifecycle import (
     reconcile_event_lifecycle,
 )
 from app.discovery.service import (
+    DiscoveryService,
     SourceLockedError,
     get_discovery_metrics,
     is_source_locked,
@@ -19,6 +20,8 @@ from app.discovery.service import (
 )
 from app.models import AdminUser, DiscoveryRun, DiscoverySource, Event, EventSource, SearchCampaign
 from app.schemas import (
+    AutonomousCampaignRequest,
+    AutonomousCampaignResponse,
     DiscoveryCandidateRead,
     DiscoveryMetrics,
     DiscoveryRunList,
@@ -245,6 +248,25 @@ async def trigger_all_sources(
         )
         for r in runs
     ]
+
+
+@router.post("/autonomous-campaign", response_model=AutonomousCampaignResponse)
+async def trigger_autonomous_campaign(
+    payload: Optional[AutonomousCampaignRequest] = None,
+    db: Session = Depends(get_db),
+    _: AdminUser = Depends(auth),
+):
+    """Executes the autonomous internet-wide search campaign across target regions and categories."""
+    if payload is None:
+        payload = AutonomousCampaignRequest()
+    service = DiscoveryService(db)
+    result = await service.run_autonomous_campaign(
+        region=payload.region,
+        categories=payload.categories,
+        languages=payload.languages,
+        max_pages=payload.max_pages,
+    )
+    return result
 
 
 @router.post("/search", status_code=201)

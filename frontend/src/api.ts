@@ -1,5 +1,7 @@
 import type {
   AdminMetrics,
+  AutonomousCampaignRequest,
+  AutonomousCampaignResult,
   Category,
   DiscoveryCandidate,
   DiscoveryMetrics,
@@ -157,6 +159,19 @@ export const getAdminDiscoveryMetrics = () =>
 
 export const triggerAdminSearchCampaign = () =>
   adminRequest<SearchCampaign>('/admin/discovery/search', { method: 'POST' })
+
+export const triggerAdminAutonomousCampaign = (params?: AutonomousCampaignRequest) =>
+  adminRequest<AutonomousCampaignResult>('/admin/discovery/autonomous-campaign', {
+    method: 'POST',
+    body: JSON.stringify(
+      params || {
+        region: 'Tamil Nadu',
+        categories: ['Hackathon', 'Symposium', 'Workshop', 'Tech Meetup'],
+        languages: ['en', 'ta'],
+        max_pages: 3,
+      }
+    ),
+  })
 
 export const getAdminSearchCampaigns = () =>
   adminRequest<SearchCampaign[]>('/admin/discovery/search/campaigns')

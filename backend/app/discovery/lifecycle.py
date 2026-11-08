@@ -421,16 +421,16 @@ def handle_duplicate_event_update(
     # 3. If any field changed, write field diff into update_history and update event record
     if changes:
         history = list(existing_event.update_history or [])
-        for f_name, f_vals in changes.items():
-            diff_entry = {
-                "timestamp": as_of.isoformat(),
-                "source_url": new_source_url or existing_event.original_source_url,
-                "field": f_name,
-                "old_value": f_vals["old"],
-                "new_value": f_vals["new"],
-                "changes": changes,
-            }
-            history.append(diff_entry)
+        primary_field = list(changes.keys())[0]
+        diff_entry = {
+            "timestamp": as_of.isoformat(),
+            "source_url": new_source_url or existing_event.original_source_url,
+            "field": primary_field,
+            "old_value": changes[primary_field]["old"],
+            "new_value": changes[primary_field]["new"],
+            "changes": changes,
+        }
+        history.append(diff_entry)
         existing_event.update_history = history
 
         # Update event record

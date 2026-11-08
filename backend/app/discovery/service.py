@@ -6,7 +6,7 @@ import urllib.parse
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import Date, cast, desc, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.discovery.connectors.registry import get_connector
@@ -713,6 +713,7 @@ class DiscoveryService:
         region: str = "Tamil Nadu",
         categories: list[str] | None = None,
         languages: list[str] | None = None,
+        max_pages: int = 3,
     ) -> dict[str, Any]:
         from app.discovery.fetcher import fetch_url_content
         from app.discovery.search import AutonomousSearchEngine
@@ -734,18 +735,31 @@ class DiscoveryService:
             search_results_collected += len(hits)
             all_hits.extend(hits)
 
-            exec_rec = SearchQueryExecution(
-                query_text=q,
-                language=target_langs[0] if target_langs else "en",
-                category=target_cats[0] if target_cats else "General",
-                location_target=region,
-                page_number=1,
-                results_count=len(hits),
-                new_urls_count=len(hits),
-                yield_score=1.0 if hits else 0.0,
-                executed_at=started_at,
+            existing_exec = await self._db_scalar(
+                select(SearchQueryExecution).where(
+                    SearchQueryExecution.query_text == q,
+                    SearchQueryExecution.page_number == 1,
+                ).order_by(SearchQueryExecution.executed_at.desc()).limit(1)
             )
-            self.db.add(exec_rec)
+            if existing_exec:
+                existing_exec.results_count = len(hits)
+                existing_exec.new_urls_count = len(hits)
+                existing_exec.yield_score = 1.0 if hits else 0.0
+                existing_exec.executed_at = started_at
+            else:
+                exec_rec = SearchQueryExecution(
+                    query_text=q,
+                    language=target_langs[0] if target_langs else "en",
+                    category=target_cats[0] if target_cats else "General",
+                    location_target=region,
+                    page_number=1,
+                    results_count=len(hits),
+                    new_urls_count=len(hits),
+                    yield_score=1.0 if hits else 0.0,
+                    executed_at=started_at,
+                )
+                self.db.add(exec_rec)
+            await self._db_flush()
 
         new_urls_discovered = 0
         new_sources_identified = 0
@@ -770,7 +784,8 @@ class DiscoveryService:
                 seen_campaign_urls.add(canonical)
                 unique_hits.append(hit)
 
-        # Process each unique search result
+        # 1. URL & Source Discovery across ALL search hits
+        candidates_to_fetch: list[tuple[str, str, DiscoveredUrl]] = []
         for hit in unique_hits:
             raw_url = hit.get("url")
             if not raw_url:
@@ -781,7 +796,6 @@ class DiscoveryService:
             domain_root = f"{parsed.scheme}://{domain}"
             canonical = normalize_url(raw_url)
 
-            # 1. Discovered URL tracking
             existing_disc = await self._db_scalar(
                 select(DiscoveredUrl).where(DiscoveredUrl.canonical_url == canonical)
             )
@@ -799,9 +813,13 @@ class DiscoveryService:
             else:
                 disc_url = existing_disc
 
-            # 2. Source identification
             existing_source = await self._db_scalar(
-                select(DiscoverySource).where(DiscoverySource.base_url.like(f"%{domain}%"))
+                select(DiscoverySource).where(
+                    or_(
+                        DiscoverySource.base_url.like(f"%{domain}%"),
+                        DiscoverySource.name == f"Discovered Source ({domain})"
+                    )
+                )
             )
             if not existing_source:
                 new_source = DiscoverySource(
@@ -816,126 +834,157 @@ class DiscoveryService:
                 await self._db_flush()
                 new_sources_identified += 1
 
-            # 3. Fetch URL content
-            page_data = await fetch_url_content(raw_url)
-            http_status = page_data.get("status", 200)
-            html_text = page_data.get("html", "")
+            if len(candidates_to_fetch) < max_pages:
+                candidates_to_fetch.append((raw_url, canonical, disc_url))
 
-            if http_status == 200:
-                disc_url.fetch_status = "fetched"
-                disc_url.fetched_at = datetime.now(timezone.utc)
-                pages_successfully_fetched += 1
-            else:
-                disc_url.fetch_status = "failed"
-                pages_blocked_or_inaccessible += 1
-                continue
+        # 2. Fetch and Extract Candidates for top prioritized target pages
+        for raw_url, canonical, disc_url in candidates_to_fetch:
+            try:
+                page_data = await fetch_url_content(raw_url)
+                http_status = page_data.get("status", 200)
+                html_text = page_data.get("html", "")
 
-            # 4. Extract candidate with Ollama
-            extraction = await extract_with_ollama(html_text)
-            if not extraction:
-                continue
-
-            is_event = extraction.get("is_event", True)
-            title = extraction.get("title")
-            if not is_event or not title:
-                continue
-
-            event_candidates_extracted += 1
-
-            start_str = extraction.get("start_date")
-            end_str = extraction.get("end_date")
-            venue_name = extraction.get("venue_name")
-            city = extraction.get("city") or "Chennai"
-            organizer = extraction.get("organizer") or "Organizer"
-            reg_url = extraction.get("registration_url") or raw_url
-            verbatim_quote = extraction.get("verbatim_evidence_quote") or title
-
-            start_dt = None
-            if start_str:
-                try:
-                    start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-                except Exception:
-                    pass
-
-            if not start_dt:
-                start_dt = started_at + timedelta(days=14)
-
-            end_dt = None
-            if end_str:
-                try:
-                    end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
-                except Exception:
-                    pass
-
-            # 5. Deduplication check
-            matched_event = find_matching_event(
-                self.sync_db,
-                title=title,
-                start_date=start_dt,
-                city=city,
-                canonical_url=canonical,
-                canonical_registration_url=reg_url,
-            )
-
-            now_ts = datetime.now(timezone.utc)
-
-            if matched_event:
-                # Event duplicate detected -> attempt update
-                field_changed = handle_duplicate_event_update(
-                    self.sync_db,
-                    matched_event,
-                    new_source_url=raw_url,
-                    new_start_date=start_dt,
-                    new_venue_name=venue_name,
-                    new_registration_url=reg_url,
-                    as_of=now_ts,
-                )
-                if field_changed:
-                    events_updated += 1
+                if http_status == 200:
+                    disc_url.fetch_status = "fetched"
+                    disc_url.fetched_at = datetime.now(timezone.utc)
+                    pages_successfully_fetched += 1
                 else:
-                    duplicates_detected += 1
-            else:
-                # 6. New event creation and auto-publishing
-                confidence_score = 0.85
-                outcome = "auto_published"
-                initial_status = "published"
-                initial_published = True
+                    disc_url.fetch_status = "failed"
+                    pages_blocked_or_inaccessible += 1
+                    continue
 
-                valid_events += 1
-                events_published += 1
+                clean_text_content = ""
+                try:
+                    import trafilatura
+                    clean_text_content = trafilatura.extract(html_text, include_links=True) or ""
+                except Exception:
+                    clean_text_content = ""
 
-                content_hash = compute_event_content_hash(title, start_dt, city)
-                slug = generate_unique_event_slug(self.sync_db, title)
+                if not clean_text_content:
+                    try:
+                        from bs4 import BeautifulSoup
+                        soup = BeautifulSoup(html_text, "html.parser")
+                        for tag in soup(["script", "style", "nav", "footer", "header", "noscript"]):
+                            tag.extract()
+                        clean_text_content = soup.get_text(separator=" ", strip=True)
+                    except Exception:
+                        clean_text_content = html_text[:3000]
 
-                new_event = Event(
+                extraction = await extract_with_ollama(clean_text_content)
+                if not extraction:
+                    continue
+
+                if hasattr(extraction, "model_dump"):
+                    extraction_dict = extraction.model_dump()
+                elif isinstance(extraction, dict):
+                    extraction_dict = extraction
+                else:
+                    extraction_dict = {}
+
+                is_event = extraction_dict.get("is_event", True) if "is_event" in extraction_dict else True
+                title = extraction_dict.get("title")
+                if not is_event or not title:
+                    continue
+
+                event_candidates_extracted += 1
+
+                start_str = extraction_dict.get("start_date")
+                end_str = extraction_dict.get("end_date")
+                venue_name = extraction_dict.get("venue_name")
+                city = extraction_dict.get("city") or "Chennai"
+                organizer = extraction_dict.get("organizer") or "Organizer"
+                reg_url = extraction_dict.get("registration_url") or raw_url
+                verbatim_quote = extraction_dict.get("verbatim_evidence_quote") or title
+
+                start_dt = None
+                if start_str:
+                    try:
+                        start_dt = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                    except Exception:
+                        pass
+
+                if not start_dt:
+                    start_dt = started_at + timedelta(days=14)
+
+                end_dt = None
+                if end_str:
+                    try:
+                        end_dt = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
+                    except Exception:
+                        pass
+
+                matched_event = find_matching_event(
+                    self.sync_db,
                     title=title,
-                    slug=slug,
-                    description=verbatim_quote,
-                    short_description=title,
-                    organizer_name=organizer,
-                    registration_url=reg_url,
-                    official_website=canonical,
                     start_date=start_dt,
-                    end_date=end_dt,
-                    venue=venue_name,
                     city=city,
-                    state=region,
-                    event_type="hackathon" if "hack" in title.lower() else ("symposium" if "symposium" in title.lower() else "workshop"),
-                    mode="offline",
-                    status=initial_status,
-                    is_published=initial_published,
-                    original_source_url=raw_url,
-                    additional_source_urls=[],
-                    confidence_score=confidence_score,
-                    validation_outcome=outcome,
-                    content_hash=content_hash,
-                    discovered_at=now_ts,
-                    extracted_at=now_ts,
-                    verified_at=now_ts,
-                    update_history=[],
+                    canonical_url=canonical,
+                    canonical_registration_url=reg_url,
                 )
-                self.db.add(new_event)
-                await self._db_flush()
+
+                now_ts = datetime.now(timezone.utc)
+
+                if matched_event:
+                    field_changed = handle_duplicate_event_update(
+                        self.sync_db,
+                        matched_event,
+                        new_source_url=raw_url,
+                        new_start_date=start_dt,
+                        new_venue_name=venue_name,
+                        new_registration_url=reg_url,
+                        as_of=now_ts,
+                    )
+                    if field_changed:
+                        events_updated += 1
+                    else:
+                        duplicates_detected += 1
+                else:
+                    confidence_score = 0.85
+                    outcome = "auto_published"
+                    initial_status = "published"
+                    initial_published = True
+
+                    valid_events += 1
+                    events_published += 1
+
+                    content_hash = compute_event_content_hash(title, start_dt, city)
+                    slug = generate_unique_event_slug(self.sync_db, title)
+
+                    new_event = Event(
+                        title=title,
+                        slug=slug,
+                        description=verbatim_quote,
+                        short_description=title,
+                        organizer_name=organizer,
+                        registration_url=reg_url,
+                        official_website=canonical,
+                        start_date=start_dt,
+                        end_date=end_dt,
+                        starts_at=start_dt,
+                        ends_at=end_dt,
+                        organizer=organizer,
+                        ticket_url=reg_url,
+                        venue=venue_name,
+                        city=city,
+                        state=region,
+                        event_type="hackathon" if "hack" in title.lower() else ("symposium" if "symposium" in title.lower() else "workshop"),
+                        mode="offline",
+                        status=initial_status,
+                        is_published=initial_published,
+                        original_source_url=raw_url,
+                        additional_source_urls=[],
+                        confidence_score=confidence_score,
+                        validation_outcome=outcome,
+                        content_hash=content_hash,
+                        discovered_at=now_ts,
+                        extracted_at=now_ts,
+                        verified_at=now_ts,
+                        update_history=[],
+                    )
+                    self.db.add(new_event)
+                    await self._db_flush()
+            except Exception as item_err:
+                logger.warning("Error processing candidate %s: %s", raw_url, item_err)
 
         await self._db_commit()
         duration = round((datetime.now(timezone.utc) - started_at).total_seconds(), 2)

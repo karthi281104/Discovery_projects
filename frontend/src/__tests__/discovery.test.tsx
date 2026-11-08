@@ -125,6 +125,37 @@ describe('DiscoveryMonitor Component', () => {
     })
   })
 
+  it('triggers autonomous campaign on Search Internet button click', async () => {
+    const campaignSpy = vi.spyOn(api, 'triggerAdminAutonomousCampaign').mockResolvedValue({
+      queries_executed: 4,
+      search_results_collected: 12,
+      new_urls_discovered: 8,
+      new_sources_identified: 1,
+      pages_successfully_fetched: 3,
+      pages_blocked_or_inaccessible: 0,
+      event_candidates_extracted: 2,
+      valid_events: 2,
+      events_published: 2,
+      candidates_requiring_review: 0,
+      duplicates_detected: 0,
+      events_updated: 0,
+      source_failures: 0,
+      discovery_execution_duration: 3.5,
+    })
+    render(<DiscoveryMonitor />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Search Internet')).toBeDefined()
+    })
+
+    fireEvent.click(screen.getByText('Search Internet'))
+
+    await waitFor(() => {
+      expect(campaignSpy).toHaveBeenCalledTimes(1)
+      expect(screen.getByText(/Autonomous campaign completed in 3.5s/i)).toBeDefined()
+    })
+  })
+
   it('triggers individual source run on button click', async () => {
     const triggerSourceSpy = vi.spyOn(api, 'triggerAdminDiscoverySource').mockResolvedValue(mockRuns[0])
     render(<DiscoveryMonitor />)

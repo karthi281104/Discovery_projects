@@ -9,9 +9,9 @@ import {
   getAdminPublishedEvents,
   getAdminReviewQueue,
   toggleAdminDiscoverySource,
+  triggerAdminAutonomousCampaign,
   triggerAdminDiscoveryAll,
   triggerAdminDiscoverySource,
-  triggerAdminSearchCampaign,
   updateAdminDiscoverySource,
   updateEventAction,
 } from './api'
@@ -184,9 +184,18 @@ export function DiscoveryMonitor() {
     setGlobalError(null)
     setSuccessMsg(null)
     try {
-      const campaign = await triggerAdminSearchCampaign()
+      const result = await triggerAdminAutonomousCampaign({
+        region: 'Tamil Nadu',
+        categories: ['Hackathon', 'Symposium', 'Workshop', 'Tech Meetup'],
+        languages: ['en', 'ta'],
+        max_pages: 3,
+      })
       setSuccessMsg(
-        `Search campaign completed: ${campaign.results_collected} results and ${campaign.sources_discovered} new sources.`
+        `Autonomous campaign completed in ${result.discovery_execution_duration}s: ` +
+        `${result.queries_executed} queries, ${result.search_results_collected} results, ` +
+        `${result.new_urls_discovered} URLs discovered, ${result.event_candidates_extracted} candidates extracted, ` +
+        `${result.events_published} published, ${result.candidates_requiring_review} for review, ` +
+        `${result.events_updated} updated, ${result.duplicates_detected} duplicates.`
       )
       loadAll()
     } catch (err) {

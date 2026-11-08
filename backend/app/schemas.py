@@ -429,3 +429,28 @@ class DiscoveryMetrics(BaseModel):
     total_events_updated: int = 0
     total_duplicates_skipped: int = 0
     total_validation_failures: int = 0
+
+
+class AutonomousCampaignRequest(BaseModel):
+    region: str = "Tamil Nadu"
+    categories: list[str] = Field(default_factory=lambda: ["Hackathon", "Symposium", "Workshop", "Tech Meetup"])
+    languages: list[str] = Field(default_factory=lambda: ["en", "ta"])
+    max_pages: int = 3
+
+
+class AutonomousCampaignResponse(BaseModel):
+    queries_executed: int = 0
+    search_results_collected: int = 0
+    new_urls_discovered: int = 0
+    new_sources_identified: int = 0
+    pages_successfully_fetched: int = 0
+    pages_blocked_or_inaccessible: int = 0
+    event_candidates_extracted: int = 0
+    valid_events: int = 0
+    events_published: int = 0
+    candidates_requiring_review: int = 0
+    duplicates_detected: int = 0
+    events_updated: int = 0
+    source_failures: int = 0
+    discovery_execution_duration: float = 0.0
+

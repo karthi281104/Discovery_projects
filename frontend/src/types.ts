@@ -191,6 +191,30 @@ export type DiscoveryMetrics = {
   total_validation_failures?: number
 }
 
+export type AutonomousCampaignRequest = {
+  region?: string
+  categories?: string[]
+  languages?: string[]
+  max_pages?: number
+}
+
+export type AutonomousCampaignResult = {
+  queries_executed: number
+  search_results_collected: number
+  new_urls_discovered: number
+  new_sources_identified: number
+  pages_successfully_fetched: number
+  pages_blocked_or_inaccessible: number
+  event_candidates_extracted: number
+  valid_events: number
+  events_published: number
+  candidates_requiring_review: number
+  duplicates_detected: number
+  events_updated: number
+  source_failures: number
+  discovery_execution_duration: number
+}
+
 export type SearchCampaign = {
   id: number | string
   status: string

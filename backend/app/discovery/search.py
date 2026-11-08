@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 import uuid
 
 import httpx
-from sqlalchemy import func, select, text
+from sqlalchemy import Date, cast, func, select, text
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -110,6 +110,11 @@ def is_valid_event_url(url: str | None) -> bool:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         return False
 
+    domain = parsed.netloc.lower()
+    blocked_domains = ("youtube.com", "facebook.com", "instagram.com", "twitter.com", "x.com", "linkedin.com")
+    if any(domain.endswith(b) for b in blocked_domains):
+        return False
+
     path_lower = parsed.path.lower()
 
     # Filter out non-event files
@@ -132,25 +137,33 @@ def generate_autonomous_queries(max_queries: int = 50) -> list[QuerySpecificatio
     """
     specs: list[QuerySpecification] = []
 
-    # 1. English: Location + Category + Time markers
+    # 1. English: Region + Category + Time markers
+    for cat in CATEGORIES_EN[:4]:
+        query_str = f'"{cat}" "Tamil Nadu" 2026 registration'
+        specs.append(QuerySpecification(query_str, language="en", category=cat, location_target="Tamil Nadu"))
+
+    for loc, cat in itertools.product(LOCATIONS[:3], CATEGORIES_EN[:3]):
+        query_str = f'"{cat}" "{loc}" 2026 registration'
+        specs.append(QuerySpecification(query_str, language="en", category=cat, location_target=loc))
+
+    # 2. Tamil: Specific event types & Tamil category terms
+    for ta_term in CATEGORIES_TA:
+        query_str = f"தமிழ்நாடு {ta_term} பதிவு 2026"
+        specs.append(QuerySpecification(query_str, language="ta", category=ta_term, location_target="Tamil Nadu"))
+
+    for loc, ta_term in itertools.product(LOCATIONS[:3], CATEGORIES_TA):
+        query_str = f"{ta_term} {loc} 2026 நிகழ்வுகள்"
+        specs.append(QuerySpecification(query_str, language="ta", category=ta_term, location_target=loc))
+
+    # 3. Additional English: Location + Category + Time markers
     for loc, cat in itertools.product(LOCATIONS, CATEGORIES_EN):
         query_str = f'"{cat}" "{loc}" 2026 registration'
         specs.append(QuerySpecification(query_str, language="en", category=cat, location_target=loc))
 
-    # 2. English: Organizer + Category + Location
+    # 4. English: Organizer + Category + Location
     for org, cat, loc in itertools.product(ORGANIZER_KEYWORDS[:3], CATEGORIES_EN[:4], LOCATIONS[:4]):
         query_str = f"{org} {cat} {loc} 2026"
         specs.append(QuerySpecification(query_str, language="en", category=cat, location_target=loc))
-
-    # 3. Tamil: Tamil category terms + Location + 2026
-    for loc, ta_term in itertools.product(LOCATIONS[:5], CATEGORIES_TA):
-        query_str = f"{ta_term} {loc} 2026 நிகழ்வுகள்"
-        specs.append(QuerySpecification(query_str, language="ta", category=ta_term, location_target=loc))
-
-    # 4. Tamil: Specific event types
-    for ta_term in CATEGORIES_TA:
-        query_str = f"தமிழ்நாடு {ta_term} பதிவு 2026"
-        specs.append(QuerySpecification(query_str, language="ta", category=ta_term, location_target="Tamil Nadu"))
 
     # Deduplicate while preserving order
     seen = set()
@@ -282,7 +295,7 @@ async def execute_autonomous_search(
             select(SearchQueryExecution.id).where(
                 SearchQueryExecution.query_text == spec.query_text,
                 SearchQueryExecution.page_number == page_num,
-                func.cast(SearchQueryExecution.executed_at, func.date) == today,
+                cast(SearchQueryExecution.executed_at, Date) == today,
             )
         )
         if existing_run:
@@ -432,20 +445,112 @@ async def run_search_campaign(
     return campaign
 
 
-class AutonomousSearchEngine:
-    """Autonomous search engine interface providing SearXNG querying and search campaign orchestration."""
+BLOCKED_SEARCH_DOMAINS = (
+    "youtube.com", "facebook.com", "instagram.com", "twitter.com", "x.com", "linkedin.com"
+)
+IGNORED_SEARCH_EXTENSIONS = (
+    ".pdf", ".docx", ".xlsx", ".zip", ".jpg", ".png", ".svg"
+)
 
-    @staticmethod
-    async def query_searxng(query: str, page: int = 1, base_url: str = settings.searxng_url) -> list[dict[str, Any]]:
-        raw_hits = await search_searxng(query=query, page=page, base_url=base_url)
-        return [
-            {
-                "url": h.url,
-                "title": h.title,
-                "content": h.snippet,
-                "snippet": h.snippet,
-                "score": h.score,
-            }
-            for h in raw_hits
-        ]
+
+class AutonomousSearchEngine:
+    """Autonomous search engine interface providing SearXNG querying, filtering, and canonicalization."""
+
+    def __init__(self, base_url: Optional[str] = None):
+        configured = (
+            base_url
+            or getattr(settings, "searxng_base_url", None)
+            or getattr(settings, "searxng_url", None)
+            or "http://localhost:8080"
+        )
+        self.base_url = configured.rstrip("/")
+
+    async def execute_raw_search(self, query_text: str, page: int = 1) -> list[dict[str, Any]]:
+        params = {
+            "q": query_text,
+            "format": "json",
+            "categories": "general",
+            "pageno": page,
+        }
+        endpoints_to_try = [f"{self.base_url}/search"]
+        if "searxng:8080" in self.base_url:
+            endpoints_to_try.append("http://localhost:8080/search")
+        elif "localhost:8080" in self.base_url:
+            endpoints_to_try.append("http://searxng:8080/search")
+
+        for endpoint in endpoints_to_try:
+            try:
+                async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
+                    response = await client.get(
+                        endpoint,
+                        params=params,
+                        headers={"User-Agent": getattr(settings, "discovery_user_agent", "TamilEventDiscoveryBot/1.0")},
+                    )
+                    if response.status_code != 200:
+                        logger.error("SearXNG error %s from %s: %s", response.status_code, endpoint, response.text)
+                        continue
+
+                    data = response.json()
+                    raw_results = data.get("results", [])
+                    logger.info("SearXNG query='%s' returned %d results", query_text, len(raw_results))
+                    return raw_results
+            except Exception as e:
+                logger.debug("SearXNG endpoint %s failed for query '%s': %s", endpoint, query_text, e)
+                continue
+
+        logger.error("SearXNG connection error for query '%s'", query_text)
+        return []
+
+    def filter_and_canonicalize(
+        self,
+        raw_results: list[dict[str, Any]],
+        existing_urls: set[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        clean_candidates = []
+        existing = existing_urls or set()
+
+        for item in raw_results:
+            url = (item.get("url") or "").strip()
+            if not url or url in existing:
+                continue
+
+            parsed = urlparse(url)
+            domain = parsed.netloc.lower()
+
+            if any(domain.endswith(b) for b in BLOCKED_SEARCH_DOMAINS):
+                continue
+
+            if parsed.path.lower().endswith(IGNORED_SEARCH_EXTENSIONS):
+                continue
+
+            clean_candidates.append({
+                "url": url,
+                "domain": domain,
+                "title": item.get("title", ""),
+                "content": item.get("content", ""),
+                "snippet": item.get("content", ""),
+                "score": float(item.get("score", 0.0) or 0.0),
+            })
+
+        return clean_candidates
+
+    @classmethod
+    async def query_searxng(
+        cls_or_self,
+        query_text: str = "",
+        page: int = 1,
+        base_url: Optional[str] = None,
+        query: str = "",
+        **kwargs,
+    ) -> list[dict[str, Any]]:
+        target_query = query_text or query or kwargs.get("q", "")
+        if isinstance(cls_or_self, AutonomousSearchEngine):
+            engine = cls_or_self
+            if base_url:
+                engine.base_url = base_url.rstrip("/")
+        else:
+            engine = cls_or_self(base_url=base_url)
+
+        raw_results = await engine.execute_raw_search(target_query, page=page)
+        return engine.filter_and_canonicalize(raw_results)
 

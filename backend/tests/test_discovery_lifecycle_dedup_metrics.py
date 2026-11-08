@@ -233,7 +233,7 @@ def test_get_discovery_metrics_exact_14_counts(client, admin_headers, db: Sessio
     db.add_all([event1, event2])
     db.commit()
 
-    resp = client.get("/api/admin/discovery/metrics", headers=admin_headers)
+    resp = client.get("/api/v1/admin/discovery/metrics", headers=admin_headers)
     assert resp.status_code == 200
     data = resp.json()
 
@@ -294,8 +294,8 @@ def test_discovery_review_queue_and_published_events_endpoints(client, admin_hea
     db.add(event_rev)
     db.commit()
 
-    # 1. Test GET /api/admin/discovery/review-queue
-    resp_rq = client.get("/api/admin/discovery/review-queue", headers=admin_headers)
+    # 1. Test GET /api/v1/admin/discovery/review-queue
+    resp_rq = client.get("/api/v1/admin/discovery/review-queue", headers=admin_headers)
     assert resp_rq.status_code == 200
     rq_items = resp_rq.json()
     assert len(rq_items) >= 1
@@ -305,8 +305,8 @@ def test_discovery_review_queue_and_published_events_endpoints(client, admin_hea
     assert rq_event["additional_source_urls"] == ["https://secondary.com/review-url"]
     assert len(rq_event["update_history"]) == 1
 
-    # 2. Test GET /api/admin/discovery/published-events
-    resp_pub = client.get("/api/admin/discovery/published-events", headers=admin_headers)
+    # 2. Test GET /api/v1/admin/discovery/published-events
+    resp_pub = client.get("/api/v1/admin/discovery/published-events", headers=admin_headers)
     assert resp_pub.status_code == 200
     pub_items = resp_pub.json()
     assert isinstance(pub_items, list)
